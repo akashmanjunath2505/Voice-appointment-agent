@@ -1,0 +1,6 @@
+{
+  "name": "Medical Appointment Voice Assistant",
+  "description": "A conversational AI voice assistant that talks to patients to book, reschedule, or cancel doctor appointments and automatically synchronizes them with Google Calendar.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
