@@ -14,14 +14,9 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
-// Request Google Calendar scopes
-provider.addScope("https://www.googleapis.com/auth/calendar");
-provider.addScope("https://www.googleapis.com/auth/calendar.events");
-
-// Prompt for calendar access and account selection (allows signing in with any Google account)
+// Default auth provider without calendar scopes
 provider.setCustomParameters({
-  prompt: "select_account consent",
-  access_type: "offline",
+  prompt: "select_account",
 });
 
 let isSigningIn = false;

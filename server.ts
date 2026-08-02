@@ -202,7 +202,7 @@ Determine if there was an agreed-upon change:
             details: {
               type: Type.OBJECT,
               properties: {
-                eventId: { type: Type.STRING, description: "The Google Calendar Event ID if rescheduling or cancelling" },
+                eventId: { type: Type.STRING, description: "The Calendly Event ID if rescheduling or cancelling" },
                 start: { type: Type.STRING, description: "ISO 8601 datetime string for start" },
                 end: { type: Type.STRING, description: "ISO 8601 datetime for end" },
                 title: { type: Type.STRING, description: "E.g. 'Appointment with Dr. Abhishek'" },

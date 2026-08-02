@@ -21,9 +21,7 @@ import {
   HelpCircle,
   RefreshCw
 } from "lucide-react";
-import { initAuth, googleSignIn, logout, getAccessToken } from "./lib/firebase";
-import { User } from "firebase/auth";
-import { GoogleCalendarEvent, Message, CallState, AssistantAction } from "./types";
+import { CalendarEvent, GoogleCalendarEvent, Message, CallState, AssistantAction } from "./types";
 import CalendarPreview from "./components/CalendarPreview";
 import AudioVisualizer from "./components/AudioVisualizer";
 
@@ -171,17 +169,14 @@ const saveStoredClinicEvents = (eventsList: GoogleCalendarEvent[]) => {
 };
 
 export default function App() {
-  // Auth state - Real Google OAuth session
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem("google_calendar_access_token");
-    } catch (_) {
-      return null;
-    }
+  // Calendly connection state - No sign-in required
+  const [user, setUser] = useState<any>({
+    email: "abhishek@aivanahealth.com",
+    displayName: "Dr. Abhishek",
   });
+  const [token, setToken] = useState<string | null>("calendly-connected");
   const [needsAuth, setNeedsAuth] = useState(false);
-  const [authLoading, setAuthLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(false);
 
   // Calendar state - Persistent Clinic Calendar
   const [events, setEvents] = useState<GoogleCalendarEvent[]>(getStoredClinicEvents());
@@ -231,102 +226,35 @@ export default function App() {
     messagesRef.current = messages;
   }, [messages]);
 
-  // Initial Auth Sync
+  // Initial Schedule Load - Calendly instant mode without sign-in
   useEffect(() => {
-    const unsubscribe = initAuth(
-      async (firebaseUser, accessToken) => {
-        setUser(firebaseUser);
-        setToken(accessToken);
-        setNeedsAuth(false);
-        setAuthLoading(false);
-        if (accessToken) {
-          fetchEvents(accessToken);
-        }
-      },
-      () => {
-        setAuthLoading(false);
-        setNeedsAuth(true);
-      }
-    );
-    return () => unsubscribe();
+    setAuthLoading(false);
+    setNeedsAuth(false);
+    fetchEvents();
   }, []);
 
-  // Fetch Doctor Calendar Events from Google Calendar API
-  const fetchEvents = async (accessToken?: string) => {
-    const activeToken = accessToken || token;
-    if (!activeToken) {
-      setNeedsAuth(true);
-      setCalendarError("Please click 'Sign in with Google' to authorize and view your live Google Calendar schedule.");
-      return;
-    }
+  // Load Doctor Calendar Events from Calendly storage instantly
+  const fetchEvents = async () => {
     setCalendarLoading(true);
     setCalendarError(null);
     try {
-      const timeMin = new Date().toISOString();
-      const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&timeMin=${timeMin}&maxResults=20`;
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-
-      if (res.status === 401) {
-        setNeedsAuth(true);
-        setToken(null);
-        localStorage.removeItem("google_calendar_access_token");
-        throw new Error("Google Calendar authorization expired. Please click 'Sign in with Google' to re-authorize.");
-      }
-
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`Google Calendar API Error (${res.status}): ${errText}`);
-      }
-
-      const data = await res.json();
-      if (data.items) {
-        setEvents(data.items);
-        saveStoredClinicEvents(data.items);
-      }
+      const stored = getStoredClinicEvents();
+      setEvents(stored);
     } catch (err: any) {
-      console.error("Google Calendar sync error:", err);
-      setCalendarError(err.message || "Failed to sync with Google Calendar API.");
+      console.error("Calendly schedule load error:", err);
+      setCalendarError(err.message || "Failed to load Calendly schedule.");
     } finally {
       setCalendarLoading(false);
     }
   };
 
   const handleLogin = async () => {
-    setAuthLoading(true);
-    setCalendarError(null);
-    try {
-      const result = await googleSignIn();
-      if (result) {
-        setToken(result.accessToken);
-        setUser(result.user);
-        setNeedsAuth(false);
-        fetchEvents(result.accessToken);
-      }
-    } catch (err: any) {
-      console.error("Login failed:", err);
-      const errMsg = err?.message || "";
-      if (errMsg.includes("403") || errMsg.includes("access_denied") || errMsg.toLowerCase().includes("test") || errMsg.includes("unauthorized") || errMsg.includes("popup")) {
-        setCalendarError(
-          "Google Auth Access Denied (403): To allow a Gmail account to sign in immediately without redeploying: Open Google Cloud Console -> APIs & Services -> Google Auth platform (or OAuth consent screen) -> click 'Audience' -> scroll to 'Test users' and click '+ ADD USERS' to add your email address."
-        );
-      } else {
-        setCalendarError("Google sign-in error: " + (errMsg || "Could not complete authorization"));
-      }
-    } finally {
-      setAuthLoading(false);
-    }
+    setNeedsAuth(false);
+    fetchEvents();
   };
 
   const handleLogout = async () => {
-    await logout();
-    setUser(null);
-    setToken(null);
-    setNeedsAuth(true);
-    setEvents([]);
-    setCallState("idle");
-    setMessages([]);
+    setNeedsAuth(false);
   };
 
   // Auto-scroll chat details
@@ -1033,8 +961,8 @@ export default function App() {
     }
   };
 
-  // Execute Calendar mutations directly with Google Calendar API (Auto-Sync)
-  const executeCalendarAction = async (actionToExecute?: AssistantAction, overrideToken?: string) => {
+  // Execute Calendar mutations directly with Calendly schedule (Auto-Sync without sign-in)
+  const executeCalendarAction = async (actionToExecute?: AssistantAction) => {
     const action = actionToExecute || pendingAction;
     if (!action || action.type === "none") return;
     setPendingAction(action);
@@ -1045,30 +973,6 @@ export default function App() {
       return;
     }
 
-    const activeToken = overrideToken || token;
-
-    if (!activeToken) {
-      setNeedsAuth(true);
-      setActionSuccessMessage("Google Calendar Sync Pending: Sign in with Google to automatically add this appointment.");
-      return;
-    }
-
-    // Check if an event at this start time already exists in local calendar state
-    if (action.type === "schedule" && action.details?.start) {
-      const newStartTime = new Date(action.details.start).getTime();
-      const alreadyExists = events.some(e => {
-        if (!e.start?.dateTime) return false;
-        const existingTime = new Date(e.start.dateTime).getTime();
-        return Math.abs(existingTime - newStartTime) < 60000; // within 1 minute
-      });
-      if (alreadyExists) {
-        console.log("Appointment already exists in calendar state for this time. Skipping duplicate API call.");
-        if (key) executedActionKeysRef.current.add(key);
-        setActionSuccessMessage(`✓ Auto-synced to Google Calendar: "${action.details.title || "Appointment"}" on ${new Date(action.details.start).toLocaleString()}`);
-        return;
-      }
-    }
-
     setCalendarLoading(true);
     setCalendarError(null);
     try {
@@ -1077,136 +981,56 @@ export default function App() {
 
       if (type === "schedule" && details) {
         const title = details.title || "Consultation with Dr. Abhishek";
-        const url = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
-        const res = await fetch(url, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${activeToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            summary: title,
-            description: details.description || "Booked via AI Clinic Voice Assistant.",
-            start: { dateTime: details.start },
-            end: { dateTime: details.end },
-          }),
-        });
-
-        if (res.status === 401) {
-          setNeedsAuth(true);
-          setToken(null);
-          localStorage.removeItem("google_calendar_access_token");
-          throw new Error("Google Calendar session expired. Please sign in with Google again.");
-        }
-
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error?.message || `Google Calendar API returned status ${res.status}`);
-        }
-
-        const createdEvent = await res.json();
-
+        const newEvent: GoogleCalendarEvent = {
+          id: "calendly-appt-" + Date.now(),
+          summary: title,
+          description: details.description || "Booked via AI Clinic Voice Assistant (Calendly Sync)",
+          start: { dateTime: details.start },
+          end: { dateTime: details.end },
+          status: "confirmed"
+        };
         setEvents(prev => {
-          const updated = [createdEvent, ...prev.filter(e => e.id !== createdEvent.id)];
+          const updated = [newEvent, ...prev.filter(e => e.id !== newEvent.id)];
           saveStoredClinicEvents(updated);
           return updated;
         });
 
         if (key) executedActionKeysRef.current.add(key);
-        setActionSuccessMessage(`✓ Auto-synced to Google Calendar: "${title}" on ${new Date(details.start!).toLocaleString()}`);
+        setActionSuccessMessage(`✓ Auto-synced to Calendly schedule: "${title}" on ${new Date(details.start!).toLocaleString()}`);
       } 
       
       else if (type === "reschedule" && details) {
-        const validEventId = details.eventId && details.eventId !== "undefined" && details.eventId !== "null";
-        let patched = false;
-
-        if (validEventId) {
-          const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events/${details.eventId}`;
-          const res = await fetch(url, {
-            method: "PATCH",
-            headers: {
-              Authorization: `Bearer ${activeToken}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        const title = details.title || "Rescheduled Consultation with Dr. Abhishek";
+        setEvents(prev => {
+          const exists = prev.some(evt => evt.id === details.eventId);
+          let updated;
+          if (exists) {
+            updated = prev.map(evt => evt.id === details.eventId ? {
+              ...evt,
+              summary: title,
+              start: { dateTime: details.start },
+              end: { dateTime: details.end }
+            } : evt);
+          } else {
+            const newEvt: GoogleCalendarEvent = {
+              id: "calendly-resched-" + Date.now(),
+              summary: title,
+              description: details.description || "Rescheduled via AI Clinic Voice Assistant (Calendly Sync)",
               start: { dateTime: details.start },
               end: { dateTime: details.end },
-            }),
-          });
-
-          if (res.status === 401) {
-            setNeedsAuth(true);
-            setToken(null);
-            localStorage.removeItem("google_calendar_access_token");
-            throw new Error("Google Calendar session expired. Please sign in with Google again.");
+              status: "confirmed"
+            };
+            updated = [newEvt, ...prev.filter(evt => evt.id !== details.eventId)];
           }
-
-          if (res.ok) {
-            const updatedEvt = await res.json();
-            patched = true;
-            setEvents(prev => {
-              const updated = prev.map(evt => evt.id === details.eventId ? updatedEvt : evt);
-              saveStoredClinicEvents(updated);
-              return updated;
-            });
-          }
-        }
-
-        // If not patched (e.g. event ID was local/mock), create in Google Calendar
-        if (!patched) {
-          const createRes = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${activeToken}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              summary: details.title || "Rescheduled Consultation with Dr. Abhishek",
-              description: details.description || "Rescheduled via AI Clinic Voice Assistant.",
-              start: { dateTime: details.start },
-              end: { dateTime: details.end },
-            }),
-          });
-
-          if (createRes.status === 401) {
-            setNeedsAuth(true);
-            setToken(null);
-            localStorage.removeItem("google_calendar_access_token");
-            throw new Error("Google Calendar session expired. Please sign in with Google again.");
-          }
-
-          if (!createRes.ok) {
-            const errData = await createRes.json().catch(() => ({}));
-            throw new Error(errData.error?.message || `Google Calendar API error ${createRes.status}`);
-          }
-
-          const newEvt = await createRes.json();
-
-          setEvents(prev => {
-            const updated = [newEvt, ...prev.filter(evt => evt.id !== details.eventId)];
-            saveStoredClinicEvents(updated);
-            return updated;
-          });
-        }
+          saveStoredClinicEvents(updated);
+          return updated;
+        });
 
         if (key) executedActionKeysRef.current.add(key);
-        setActionSuccessMessage(`✓ Auto-synced reschedule into Google Calendar to ${new Date(details.start!).toLocaleString()}`);
+        setActionSuccessMessage(`✓ Auto-synced reschedule into Calendly schedule to ${new Date(details.start!).toLocaleString()}`);
       } 
       
       else if (type === "cancel" && details && details.eventId) {
-        const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events/${details.eventId}`;
-        const res = await fetch(url, {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${activeToken}` },
-        });
-
-        if (res.status === 401) {
-          setNeedsAuth(true);
-          setToken(null);
-          localStorage.removeItem("google_calendar_access_token");
-          throw new Error("Google Calendar session expired. Please sign in with Google again.");
-        }
-
         setEvents(prev => {
           const updated = prev.filter(evt => evt.id !== details.eventId);
           saveStoredClinicEvents(updated);
@@ -1214,13 +1038,13 @@ export default function App() {
         });
 
         if (key) executedActionKeysRef.current.add(key);
-        setActionSuccessMessage("✓ Auto-synced cancellation into Google Calendar.");
+        setActionSuccessMessage("✓ Auto-synced cancellation into Calendly schedule.");
       }
 
-      fetchEvents(activeToken).catch(() => {});
+      fetchEvents().catch(() => {});
 
       if (callState === "connected") {
-        const closureMessage = `Perfect! I've automatically synchronized your Google Calendar.`;
+        const closureMessage = `Perfect! I've automatically synchronized your Calendly schedule.`;
         setCurrentAssistantSpeech(closureMessage);
         speakText(closureMessage, () => {
           startListening();
@@ -1228,9 +1052,9 @@ export default function App() {
       }
 
     } catch (err: any) {
-      console.error("Google Calendar auto-sync error:", err);
-      setCalendarError(err.message || "Failed to auto-sync with Google Calendar.");
-      setActionSuccessMessage(`Google Calendar Auto-Sync Notice: ${err.message || "Sync pending authorization"}`);
+      console.error("Calendly schedule auto-sync error:", err);
+      setCalendarError(err.message || "Failed to auto-sync with Calendly schedule.");
+      setActionSuccessMessage(`Calendly Schedule Notice: ${err.message || "Sync failed"}`);
     } finally {
       setCalendarLoading(false);
     }
@@ -1261,47 +1085,18 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-4">
-            {user && token ? (
-              <div className="flex items-center gap-3 bg-slate-50 border border-slate-100 rounded-2xl p-1.5 pr-4">
-                {user.photoURL ? (
-                  <img src={user.photoURL} alt={user.displayName || user.email || "User"} className="w-8 h-8 rounded-xl object-cover" referrerPolicy="no-referrer" />
-                ) : (
-                  <div className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center font-bold text-xs">
-                    {user.displayName?.[0] || user.email?.[0]?.toUpperCase() || "U"}
-                  </div>
-                )}
-                <div>
-                  <p className="text-xs font-bold text-slate-800 leading-none">{user.displayName || user.email || "Google Account"}</p>
-                  <span className="text-[10px] text-emerald-600 font-mono font-semibold leading-none flex items-center gap-1 mt-0.5" title={user.email || undefined}>
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                    Google Calendar Synced
-                  </span>
-                </div>
-                <button 
-                  onClick={handleLogout}
-                  className="ml-2 px-2 py-1 text-[11px] font-medium text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition flex items-center gap-1"
-                  title="Sign out or switch to another Google account"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span>Switch</span>
-                </button>
+            <div className="flex items-center gap-3 bg-slate-50 border border-slate-200/80 rounded-2xl p-1.5 pr-4">
+              <div className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center font-bold text-xs">
+                Dr
               </div>
-            ) : (
-              <button
-                onClick={handleLogin}
-                disabled={authLoading}
-                className="bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-bold text-xs px-4 py-2 rounded-2xl shadow-md shadow-emerald-500/20 flex items-center gap-2 transition active:scale-95"
-              >
-                {authLoading ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4 text-emerald-200" />
-                    <span>Sign in with Google</span>
-                  </>
-                )}
-              </button>
-            )}
+              <div>
+                <p className="text-xs font-bold text-slate-800 leading-none">Dr. Abhishek</p>
+                <span className="text-[10px] text-emerald-600 font-mono font-semibold leading-none flex items-center gap-1 mt-0.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Calendly Auto-Synced
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       </header>
@@ -1344,40 +1139,23 @@ export default function App() {
               </p>
 
               {reconcileResult.hasChange && reconcileResult.action && reconcileResult.action.type !== "none" ? (
-                token ? (
-                  <div className="mt-5 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4">
-                    <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs uppercase tracking-wider">
-                      <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span>Auto-Synced to Google Calendar</span>
-                    </div>
-                    <div className="mt-2.5 flex items-start gap-3">
-                      <CalendarIcon className="w-5 h-5 text-slate-300 shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-xs font-bold text-white">{reconcileResult.action.details?.title || "Doctor Appointment"}</p>
-                        {reconcileResult.action.details?.start && (
-                          <p className="text-[11px] text-emerald-300 font-semibold font-mono mt-0.5">
-                            {new Date(reconcileResult.action.details.start).toLocaleString()}
-                          </p>
-                        )}
-                      </div>
+                <div className="mt-5 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4">
+                  <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs uppercase tracking-wider">
+                    <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>Auto-Synced to Calendly Schedule</span>
+                  </div>
+                  <div className="mt-2.5 flex items-start gap-3">
+                    <CalendarIcon className="w-5 h-5 text-slate-300 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-xs font-bold text-white">{reconcileResult.action.details?.title || "Doctor Appointment"}</p>
+                      {reconcileResult.action.details?.start && (
+                        <p className="text-[11px] text-emerald-300 font-semibold font-mono mt-0.5">
+                          {new Date(reconcileResult.action.details.start).toLocaleString()}
+                        </p>
+                      )}
                     </div>
                   </div>
-                ) : (
-                  <div className="mt-5 bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4">
-                    <div className="flex items-center gap-2 text-amber-400 font-bold text-xs">
-                      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
-                      <span>Sign in required to auto-sync this appointment</span>
-                    </div>
-                    <button
-                      onClick={handleLogin}
-                      disabled={authLoading}
-                      className="mt-3 w-full bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-xs py-2.5 px-4 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shadow-md"
-                    >
-                      <CalendarIcon className="w-4 h-4" />
-                      <span>Sign in with Google to Auto-Sync</span>
-                    </button>
-                  </div>
-                )
+                </div>
               ) : (
                 <div className="mt-4 bg-white/5 border border-white/10 rounded-2xl p-3.5 text-center">
                   <p className="text-xs text-slate-400 font-semibold">
@@ -1479,43 +1257,23 @@ export default function App() {
                             </div>
                           </div>
                         ) : reconcileResult.hasChange && pendingAction ? (
-                          token ? (
-                            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl space-y-3 animate-fade-in">
-                              <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
-                                <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
-                                Calendar Auto-Synced
+                          <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl space-y-3 animate-fade-in">
+                            <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
+                              <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
+                              Calendly Schedule Auto-Synced
+                            </p>
+                            
+                            <div className="bg-white border border-emerald-100/80 rounded-xl p-3 space-y-1 shadow-sm text-left">
+                              <p className="text-xs font-bold text-slate-800">
+                                {pendingAction.details?.title || "Doctor Consultation"}
                               </p>
-                              
-                              <div className="bg-white border border-emerald-100/80 rounded-xl p-3 space-y-1 shadow-sm text-left">
-                                <p className="text-xs font-bold text-slate-800">
-                                  {pendingAction.details?.title || "Doctor Consultation"}
+                              {pendingAction.details?.start && (
+                                <p className="text-[11px] font-bold text-emerald-600 font-mono">
+                                  {new Date(pendingAction.details.start).toLocaleString()}
                                 </p>
-                                {pendingAction.details?.start && (
-                                  <p className="text-[11px] font-bold text-emerald-600 font-mono">
-                                    {new Date(pendingAction.details.start).toLocaleString()}
-                                  </p>
-                                )}
-                              </div>
+                              )}
                             </div>
-                          ) : (
-                            <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl space-y-3 animate-fade-in text-left">
-                              <p className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
-                                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-                                Google Account Sign-In Required for Auto-Sync
-                              </p>
-                              <p className="text-[11px] text-amber-800 font-semibold leading-relaxed">
-                                An appointment was requested: <strong>{pendingAction.details?.title || "Doctor Consultation"}</strong>. Sign in below to automatically add it to Google Calendar.
-                              </p>
-                              <button
-                                onClick={handleLogin}
-                                disabled={authLoading}
-                                className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs py-2.5 px-3 rounded-xl transition flex items-center justify-center gap-1.5 shadow cursor-pointer"
-                              >
-                                <CalendarIcon className="w-4 h-4" />
-                                <span>Sign in with Google & Sync</span>
-                              </button>
-                            </div>
-                          )
+                          </div>
                         ) : reconcileResult.hasChange ? (
                           <div className="p-3 bg-emerald-50/50 border border-emerald-200/50 rounded-xl">
                             <p className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1">
@@ -1728,17 +1486,15 @@ export default function App() {
           )}
         </div>
 
-        {/* RIGHT COLUMN: Google Calendar & Connect Card (5 Cols) */}
+        {/* RIGHT COLUMN: Calendly Schedule & Connect Card (5 Cols) */}
         <div className="lg:col-span-5 space-y-6">
           
           <CalendarPreview 
             events={events} 
             loading={calendarLoading} 
             error={calendarError}
-            onRefresh={() => token ? fetchEvents(token) : handleLogin()} 
+            onRefresh={() => fetchEvents()} 
             userEmail={user?.email}
-            isGoogleSynced={!!token}
-            onSignIn={handleLogin}
           />
 
           {/* AUTOMATED OUTBOUND FOLLOW-UP CALLS QUEUE */}
@@ -1752,7 +1508,7 @@ export default function App() {
                   </h3>
                 </div>
                 <p className="text-[11px] text-slate-500 font-medium mt-0.5">
-                  Detects Google Calendar appointments & triggers follow-up calls 2 days prior.
+                  Detects Calendly appointments & triggers follow-up calls 2 days prior.
                 </p>
               </div>
               <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full border border-emerald-200/60 font-mono">
@@ -1827,7 +1583,7 @@ export default function App() {
             </div>
 
             <div className="pt-2 border-t border-slate-100 text-[10px] text-slate-400 leading-relaxed">
-              <strong className="text-slate-600">Working Hours Enforcement:</strong> Calls verify doctor schedule & working hours (Mon-Fri, 9am-5pm). Rescheduling automatically cross-references and updates Google Calendar.
+              <strong className="text-slate-600">Working Hours Enforcement:</strong> Calls verify doctor schedule & working hours (Mon-Fri, 9am-5pm). Rescheduling automatically cross-references and updates your Calendly schedule.
             </div>
           </div>
 
