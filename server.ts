@@ -47,7 +47,9 @@ app.post("/api/voice-assistant/chat", async (req, res) => {
         .join("\n\n");
     }
 
-    const systemInstruction = `You are a warm, highly human, natural, and professional AI voice assistant for Dr. Abhishek's medical clinic. You are making an outbound call to a patient to book a new appointment or reschedule an existing appointment (e.g. if there's a doctor schedule conflict or they requested a change).
+    const systemInstruction = `You are a warm, highly human, natural, and professional AI voice assistant for Dr. Abhishek's medical clinic. You handle two distinct clinical scheduling workflows:
+1. INBOUND CALL (Book Appointment): Someone new calling our clinic asking when an appointment should be booked for them. When answering an inbound call, greet them warmly as the clinic AI assistant ("Thank you for calling Dr. Abhishek's medical clinic! I'm Zephyr, the clinic AI assistant. How can I help you today?"), ask for their name/reason, check clinic working hours (Monday to Friday, 9:00 AM - 5:00 PM) and the Doctor's Calendar below, and propose available times one by one. When they agree, use the schedule action.
+2. OUTBOUND CALL (Reschedule): Us calling an existing patient to schedule or reschedule their appointment. When calling an existing patient, introduce yourself as calling from Dr. Abhishek's clinic for the patient, explain we need to reschedule their appointment to a time that works best for them, and propose open slots during working hours (Mon-Fri 9:00 AM - 5:00 PM). When they agree, use the reschedule action.
 
 Current Patient Local Time: ${currentDateTime || new Date().toISOString()}
 
@@ -67,7 +69,7 @@ Your personality guidelines:
 5. RECOMMEND SPECIFIC TIMES: Look at the doctor's calendar, find free slots, and propose them one-by-one. (e.g., "Would Tuesday morning at 10:00 work for you?") rather than asking "When are you free?"
 6. ACTIONS: If the patient agrees to a specific slot (or confirms rescheduling/cancelling), output the correct 'action' structure.
    - For booking a new appointment: set action.type to "schedule", and supply start, end (usually 30 minutes duration), and a title (e.g. "Appointment with Dr. Abhishek").
-   - For rescheduling: set action.type to "reschedule", supply the 'eventId' of the conflict event, and the new start/end times.
+   - For rescheduling an existing patient's appointment: set action.type to "reschedule", supply the 'eventId' of their appointment, and the new start/end times.
    - For cancelling: set action.type to "cancel", and supply the 'eventId'.
    - If still negotiating or greeting: set action.type to "none".
 
@@ -202,7 +204,7 @@ Determine if there was an agreed-upon change:
             details: {
               type: Type.OBJECT,
               properties: {
-                eventId: { type: Type.STRING, description: "The Calendly Event ID if rescheduling or cancelling" },
+                eventId: { type: Type.STRING, description: "The Google Calendar Event ID if rescheduling or cancelling" },
                 start: { type: Type.STRING, description: "ISO 8601 datetime string for start" },
                 end: { type: Type.STRING, description: "ISO 8601 datetime for end" },
                 title: { type: Type.STRING, description: "E.g. 'Appointment with Dr. Abhishek'" },
@@ -301,7 +303,20 @@ wss.on("connection", async (clientWs) => {
         }
 
         let purposeInstruction = "";
-        if (callPurpose === "followup") {
+        if (callPurpose === "new") {
+          purposeInstruction = `You are answering an INBOUND phone call from a new patient calling Dr. Abhishek's medical clinic asking when an appointment should be booked for them.
+1. Answer the incoming call warmly: e.g. "Thank you for calling Dr. Abhishek's medical clinic! I am Zephyr, the clinic AI assistant. How can I help you today?"
+2. When the caller asks to book an appointment, ask for their name and what kind of consultation they need if they haven't mentioned it.
+3. Check Dr. Abhishek's working hours (Monday to Friday, 9:00 AM - 5:00 PM) and cross-reference the Doctor's Calendar below so you do NOT propose taken slots.
+4. Recommend open slots one by one (e.g., "We have an opening on Tuesday morning at 10:00 AM, or Wednesday at 2:00 PM. Which of those works better for you?").
+5. When the caller agrees on a specific date and time, call the 'scheduleAppointment' tool immediately!`;
+        } else if (callPurpose === "reschedule") {
+          purposeInstruction = `You are making an OUTBOUND call from Dr. Abhishek's clinic to an EXISTING PATIENT (${patientName}) to schedule or reschedule their upcoming appointment ("${appointmentTitle}").
+1. Warmly introduce yourself: e.g. "Hello! This is Zephyr calling from Dr. Abhishek's clinic for ${patientName}. I'm calling regarding your upcoming appointment with Dr. Abhishek, as we need to reschedule it to a time that works best for you."
+2. Ask if they have a moment to find a time that works best, and suggest available open times during our clinic working hours (Monday to Friday, 9:00 AM - 5:00 PM). Cross-reference the Doctor's Calendar below so you do NOT propose taken slots.
+3. Recommend open slots one by one (e.g., "Would Tuesday at 2:00 PM or Wednesday at 10:00 AM work well for you?").
+4. Once the patient agrees on a new date and time, call the 'rescheduleAppointment' tool immediately with eventId: "${targetEventId || "surgery-conflict"}", start, and end times!`;
+        } else if (callPurpose === "followup") {
           purposeInstruction = `You are making an automated 2-day prior follow-up call to the patient, ${patientName} (Phone: ${patientPhone || "On file"}), regarding their upcoming appointment: "${appointmentTitle}" scheduled for ${appointmentStart}.
 Patient Context/Notes: ${patientContext || "Routine clinical follow-up"}.
 
@@ -315,17 +330,12 @@ YOUR GOALS FOR THIS AUTOMATED FOLLOW-UP CALL:
    - Cross-reference the Doctor's Calendar below to verify the requested slot is within working hours and NOT already booked.
    - If the slot is free, call the 'rescheduleAppointment' tool with eventId: "${targetEventId}", new start time, and end time.
    - If the slot is taken or outside working hours (weekends/after 5 PM), politely explain and offer the closest available open slot during working hours (Mon-Fri 9:00 AM - 5:00 PM)!`;
-        } else if (callPurpose === "reschedule") {
-          purposeInstruction = `You are calling the patient, ${patientName}, specifically because Dr. Abhishek has an urgent surgery conflict on Monday (July 20, 2026) at 10:00 AM. 
-You must warmly introduce yourself, notify ${patientName} of this conflict on Monday at 10:00 AM, and reschedule their appointment to either Tuesday (July 21, 2026) at 2:00 PM or Wednesday (July 22, 2026) at 10:00 AM.
-Check working hours (Mon-Fri 9 AM - 5 PM) and the doctor's calendar before proposing other alternative slots. Make sure to call 'rescheduleAppointment' tool with eventId: "${targetEventId || "surgery-conflict"}" once they agree.`;
         } else {
-          purposeInstruction = `You are calling the patient, ${patientName}, to schedule a brand new follow-up appointment with Dr. Abhishek.
-Warmly introduce yourself and ask when they would like to come in. 
-Check working hours (Mon-Fri 9 AM - 5 PM) and the current calendar context to propose a free slot one-by-one. When they agree to a slot, call the 'scheduleAppointment' tool.`;
+          purposeInstruction = `You are answering an INBOUND phone call from a new patient calling Dr. Abhishek's medical clinic asking when an appointment should be booked for them.
+Warmly greet them ("Thank you for calling Dr. Abhishek's medical clinic! I am Zephyr, the clinic AI assistant. How can I help you today?"), check working hours (Mon-Fri 9 AM - 5 PM) and the Doctor's Calendar below, and help them schedule an appointment slot one-by-one. When they agree to a slot, call the 'scheduleAppointment' tool.`;
         }
 
-        const systemInstruction = `You are a warm, highly human, natural, and professional AI voice assistant for Dr. Abhishek's medical clinic. You are having an active, real-time, bidirectional voice call with the patient: ${patientName} (${patientEmail}).
+        const systemInstruction = `You are a warm, highly human, natural, and professional AI voice assistant for Dr. Abhishek's medical clinic. You are having an active, real-time, bidirectional voice call (${callPurpose === "new" ? "INBOUND call answered from a new patient calling our clinic asking to book an appointment" : "OUTBOUND call to existing patient " + patientName}).
 
 Current Patient Local Time: ${currentDateTime}
 

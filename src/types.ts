@@ -11,7 +11,7 @@ export interface Message {
   };
 }
 
-export interface CalendarEvent {
+export interface GoogleCalendarEvent {
   id: string;
   summary?: string;
   description?: string;
@@ -27,8 +27,6 @@ export interface CalendarEvent {
     timeZone?: string;
   };
 }
-
-export type GoogleCalendarEvent = CalendarEvent;
 
 export type CallState = "idle" | "ringing" | "connected" | "completed" | "declined";
 
