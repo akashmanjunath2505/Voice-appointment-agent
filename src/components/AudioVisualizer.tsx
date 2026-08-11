@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 
 interface AudioVisualizerProps {
-  state: "idle" | "ringing" | "speaking" | "listening" | "completed";
+  state?: "idle" | "ringing" | "speaking" | "listening" | "completed";
+  isActive?: boolean;
 }
 
-export default function AudioVisualizer({ state }: AudioVisualizerProps) {
+export default function AudioVisualizer({ state, isActive }: AudioVisualizerProps) {
+  const currentState = state || (isActive ? "speaking" : "idle");
   const [bars, setBars] = useState<number[]>(Array(15).fill(10));
 
   useEffect(() => {
-    if (state !== "speaking" && state !== "listening" && state !== "ringing") {
+    if (currentState !== "speaking" && currentState !== "listening" && currentState !== "ringing") {
       setBars(Array(15).fill(10));
       return;
     }
@@ -16,14 +18,11 @@ export default function AudioVisualizer({ state }: AudioVisualizerProps) {
     const interval = setInterval(() => {
       setBars((prev) =>
         prev.map(() => {
-          if (state === "speaking") {
-            // High activity
+          if (currentState === "speaking") {
             return Math.floor(Math.random() * 65) + 15;
-          } else if (state === "listening") {
-            // Medium activity (background noise / breathing / speaking)
+          } else if (currentState === "listening") {
             return Math.floor(Math.random() * 35) + 8;
-          } else if (state === "ringing") {
-            // Pulsing rhythm
+          } else if (currentState === "ringing") {
             const time = Date.now() / 150;
             return Math.abs(Math.sin(time)) * 40 + 10;
           }
@@ -33,10 +32,10 @@ export default function AudioVisualizer({ state }: AudioVisualizerProps) {
     }, 80);
 
     return () => clearInterval(interval);
-  }, [state]);
+  }, [currentState]);
 
   const getThemeColors = () => {
-    switch (state) {
+    switch (currentState) {
       case "ringing":
         return {
           bar: "bg-amber-400 shadow-amber-300/30",
@@ -73,74 +72,38 @@ export default function AudioVisualizer({ state }: AudioVisualizerProps) {
   const colors = getThemeColors();
 
   return (
-    <div className="relative flex flex-col items-center justify-center p-8">
-      {/* Outer pulsing rings */}
+    <div className="relative flex flex-col items-center justify-center p-6">
       <div
-        className={`absolute w-44 h-44 rounded-full border-2 transition-all duration-1000 flex items-center justify-center ${
-          state === "ringing" || state === "speaking" || state === "listening"
+        className={`absolute w-36 h-36 rounded-full border-2 transition-all duration-1000 flex items-center justify-center ${
+          currentState === "ringing" || currentState === "speaking" || currentState === "listening"
             ? "animate-ping scale-110 opacity-70"
             : ""
         } ${colors.ring}`}
       />
-      <div
-        className={`absolute w-36 h-36 rounded-full border border-dashed transition-all duration-700 flex items-center justify-center ${
-          state === "speaking" || state === "listening" ? "animate-pulse" : ""
-        } ${colors.ring}`}
-      />
 
-      {/* Main Core Button/Circle */}
       <div
-        className={`w-28 h-28 rounded-full flex items-center justify-center z-10 shadow-2xl transition-all duration-500 ${
-          state === "ringing"
-            ? "bg-amber-50 shadow-amber-200/50"
-            : state === "speaking"
-            ? "bg-emerald-50 shadow-emerald-200/50"
-            : state === "listening"
-            ? "bg-blue-50 shadow-blue-200/50"
-            : "bg-slate-50 shadow-slate-200/30"
+        className={`w-20 h-20 rounded-full flex items-center justify-center z-10 shadow-2xl transition-all duration-500 ${
+          currentState === "speaking"
+            ? "bg-emerald-950/80 shadow-emerald-500/20 border border-emerald-500/40"
+            : "bg-slate-900 border border-slate-700"
         }`}
       >
-        <div className={`w-8 h-8 rounded-full transition-all duration-500 ${colors.dot} flex items-center justify-center`}>
-          <div className="w-3.5 h-3.5 rounded-full bg-white animate-pulse" />
+        <div className={`w-6 h-6 rounded-full transition-all duration-500 ${colors.dot} flex items-center justify-center`}>
+          <div className="w-2.5 h-2.5 rounded-full bg-white animate-pulse" />
         </div>
       </div>
 
-      {/* Real-time reactive audio wave bars */}
-      <div className="flex items-center justify-center gap-1.5 h-20 mt-8 z-10 w-full max-w-xs">
+      <div className="flex items-center justify-center gap-1.5 h-12 mt-4 z-10 w-full max-w-xs">
         {bars.map((height, i) => (
           <div
             key={i}
             className={`w-1.5 rounded-full transition-all duration-100 shadow-sm ${colors.bar}`}
             style={{
               height: `${height}%`,
-              opacity: state === "idle" ? 0.25 : 0.95 - Math.abs(7 - i) * 0.08,
+              opacity: currentState === "idle" ? 0.25 : 0.95 - Math.abs(7 - i) * 0.08,
             }}
           />
         ))}
-      </div>
-
-      <div className="text-center mt-4">
-        <span
-          className={`text-xs font-bold uppercase tracking-widest font-mono ${
-            state === "ringing"
-              ? "text-amber-500"
-              : state === "speaking"
-              ? "text-emerald-500"
-              : state === "listening"
-              ? "text-blue-500"
-              : "text-slate-400"
-          }`}
-        >
-          {state === "ringing"
-            ? "Incoming Call..."
-            : state === "speaking"
-            ? "Assistant Speaking"
-            : state === "listening"
-            ? "Listening..."
-            : state === "completed"
-            ? "Call Connected"
-            : "Assistant Offline"}
-        </span>
       </div>
     </div>
   );

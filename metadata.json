@@ -1,6 +1,6 @@
 {
-  "name": "Medical Appointment Voice Assistant",
-  "description": "A conversational AI voice assistant that talks to patients to book, reschedule, or cancel doctor appointments and automatically synchronizes them with Google Calendar.",
+  "name": "Sarvam Telephony Medical Call Agent",
+  "description": "AI voice telephony call agent powered by Sarvam AI and custom clinic backend database for booking and rescheduling medical appointments via real phone calls and in-browser audio.",
   "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

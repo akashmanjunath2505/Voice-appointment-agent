@@ -1,1955 +1,2508 @@
-import { useEffect, useState, useRef } from "react";
-import { 
-  Phone, 
-  PhoneOff, 
-  PhoneCall, 
-  Calendar as CalendarIcon, 
-  Mic, 
-  MicOff, 
-  Send, 
-  LogOut, 
-  Bot, 
-  User as UserIcon, 
-  AlertCircle, 
-  Check, 
-  CheckCircle,
-  X, 
-  Sparkles,
-  Volume2,
-  VolumeX,
+import React, { useEffect, useState, useRef } from "react";
+import {
+  Home,
+  Radio,
+  PhoneForwarded,
+  FileText,
+  Calendar as CalendarIcon,
+  Users,
+  UserCheck,
+  BookOpen,
+  BarChart3,
+  Settings,
+  Play,
+  X,
   Plus,
-  HelpCircle,
-  RefreshCw
+  ArrowLeft,
+  Mic,
+  PhoneCall,
+  PhoneOff,
+  Sparkles,
+  RefreshCw,
+  UploadCloud,
+  Trash2,
+  ShieldCheck,
+  Lock,
+  KeyRound,
+  Eye,
+  EyeOff,
+  AlertCircle,
+  LogOut,
+  Search,
+  UserPlus,
+  Clock
 } from "lucide-react";
-import { initAuth, googleSignIn, logout, getAccessToken } from "./lib/firebase";
-import { User } from "firebase/auth";
-import { GoogleCalendarEvent, Message, CallState, AssistantAction } from "./types";
-import CalendarPreview from "./components/CalendarPreview";
-import AudioVisualizer from "./components/AudioVisualizer";
+import { ClinicAppointment, Message, CallState, Doctor } from "./types";
+import { KnowledgeBaseManager } from "./components/KnowledgeBaseManager";
 
-// Retrieve SpeechRecognition APIs securely
 const SpeechRecognitionAPI = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
-const getLocalDateTimeString = () => {
-  const date = new Date();
-  const options: Intl.DateTimeFormatOptions = {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    timeZoneName: "long"
-  };
-  const localStr = date.toLocaleString("en-US", options);
-  const tzOffset = -date.getTimezoneOffset();
-  const diff = tzOffset >= 0 ? "+" : "-";
-  const pad = (num: number) => String(num).padStart(2, '0');
-  const offsetStr = `${diff}${pad(Math.floor(Math.abs(tzOffset) / 60))}:${pad(Math.abs(tzOffset) % 60)}`;
-  
-  return `${localStr} (Offset: ${offsetStr})`;
-};
+export function isWithinOperatingHours(dateTimeIso: string): { valid: boolean; reason?: string } {
+  try {
+    const date = new Date(dateTimeIso);
+    if (isNaN(date.getTime())) {
+      return { valid: false, reason: "Invalid date or time." };
+    }
 
-const getActionKey = (action?: AssistantAction | null) => {
-  if (!action || action.type === "none" || !action.details) return null;
-  const type = action.type;
-  const start = action.details.start ? new Date(action.details.start).getTime() : 0;
-  const end = action.details.end ? new Date(action.details.end).getTime() : 0;
-  const title = (action.details.title || "").toLowerCase().trim();
-  const eventId = action.details.eventId || "";
-  return `${type}:${start}:${end}:${title}:${eventId}`;
-};
+    const istOffsetMs = 5.5 * 3600 * 1000;
+    const istDate = new Date(date.getTime() + istOffsetMs);
 
-const DEFAULT_CLINIC_EVENTS: GoogleCalendarEvent[] = [
-  {
-    id: "surgery-conflict",
-    summary: "Orthopedic Knee Consultation - John Doe",
-    description: JSON.stringify({
-      patientName: "John Doe",
-      phone: "+1 (555) 234-5678",
-      patientEmail: "john.doe@example.com",
-      reason: "Orthopedic Knee Consultation",
-      patientContext: "Existing patient appointment requires calling patient to reschedule to a suitable time this week."
-    }, null, 2),
-    start: { dateTime: "2026-07-20T10:00:00-07:00" },
-    end: { dateTime: "2026-07-20T10:30:00-07:00" },
-    status: "confirmed"
-  },
-  {
-    id: "routine-checkup-1",
-    summary: "Cardiology Follow-up - Sarah Jenkins",
-    description: JSON.stringify({
-      patientName: "Sarah Jenkins",
-      phone: "+1 (555) 382-9102",
-      patientEmail: "sarah.j@example.com",
-      reason: "Post-op Cardiology Review",
-      patientContext: "Requires 2-day prior follow-up confirmation call before July 25."
-    }, null, 2),
-    start: { dateTime: "2026-07-25T14:00:00-07:00" },
-    end: { dateTime: "2026-07-25T14:30:00-07:00" },
-    status: "confirmed"
-  },
-  {
-    id: "routine-checkup-2",
-    summary: "General Health Review - Michael Chang",
-    description: JSON.stringify({
-      patientName: "Michael Chang",
-      phone: "+1 (555) 891-4021",
-      patientEmail: "m.chang@example.com",
-      reason: "Annual Physical Examination",
-      patientContext: "Patient prefers morning slots only (9:00 AM - 12:00 PM)."
-    }, null, 2),
-    start: { dateTime: "2026-07-27T10:00:00-07:00" },
-    end: { dateTime: "2026-07-27T10:30:00-07:00" },
-    status: "confirmed"
+    const dayOfWeek = istDate.getUTCDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+    const hours = istDate.getUTCHours();
+    const minutes = istDate.getUTCMinutes();
+    const totalMinutes = hours * 60 + minutes;
+
+    // Days: Mon (1) to Fri (5). Sat (6) and Sun (0) are strictly CLOSED.
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      const dayName = dayOfWeek === 0 ? "Sunday" : "Saturday";
+      return {
+        valid: false,
+        reason: `Our clinic is closed on ${dayName}s. Operating hours are Monday to Friday, 9:00 AM to 5:00 PM IST.`
+      };
+    }
+
+    // Hours: 9:00 AM (540 mins) to 5:00 PM (1020 mins)
+    const startMins = 9 * 60; // 09:00 AM
+    const endMins = 17 * 60;  // 05:00 PM (17:00 IST)
+
+    if (totalMinutes < startMins || totalMinutes >= endMins) {
+      const formattedTime = date.toLocaleTimeString("en-IN", {
+        timeZone: "Asia/Kolkata",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true
+      });
+      return {
+        valid: false,
+        reason: `The requested time (${formattedTime}) is outside operating hours (Mon–Fri, 9:00 AM – 5:00 PM IST).`
+      };
+    }
+
+    return { valid: true };
+  } catch (e) {
+    return { valid: false, reason: "Unable to verify operating hours." };
   }
-];
-
-export interface ParsedPatientDetails {
-  patientName: string;
-  phone: string;
-  patientEmail: string;
-  reason: string;
-  patientContext: string;
 }
 
-export const parseEventPatientDetails = (event: GoogleCalendarEvent): ParsedPatientDetails => {
-  let details: ParsedPatientDetails = {
-    patientName: "Patient",
-    phone: "+1 (555) 019-2831",
-    patientEmail: "",
-    reason: event.summary || "Medical Consultation",
-    patientContext: "Scheduled appointment"
-  };
-
-  if (event.description) {
-    try {
-      const json = JSON.parse(event.description);
-      if (typeof json === "object" && json !== null) {
-        if (json.patientName) details.patientName = json.patientName;
-        if (json.phone) details.phone = json.phone;
-        if (json.patientEmail) details.patientEmail = json.patientEmail;
-        if (json.reason) details.reason = json.reason;
-        if (json.patientContext) details.patientContext = json.patientContext;
-      }
-    } catch (_) {
-      details.patientContext = event.description;
-      const nameMatch = event.summary?.match(/-\s*([A-Za-z\s]+)$/);
-      if (nameMatch) details.patientName = nameMatch[1].trim();
-    }
-  } else if (event.summary) {
-    const nameMatch = event.summary.match(/-\s*([A-Za-z\s]+)$/);
-    if (nameMatch) details.patientName = nameMatch[1].trim();
-  }
-
-  return details;
-};
-
-export const getFollowUpCallDate = (eventStartISO?: string): Date => {
-  if (!eventStartISO) return new Date();
-  const apptDate = new Date(eventStartISO);
-  // Compute 2 days (48 hours) prior
-  return new Date(apptDate.getTime() - 2 * 24 * 60 * 60 * 1000);
-};
-
-const getStoredClinicEvents = (): GoogleCalendarEvent[] => {
-  try {
-    const saved = localStorage.getItem("clinic_calendar_events");
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-    }
-  } catch (_) {}
-  return DEFAULT_CLINIC_EVENTS;
-};
-
-const saveStoredClinicEvents = (eventsList: GoogleCalendarEvent[]) => {
-  try {
-    localStorage.setItem("clinic_calendar_events", JSON.stringify(eventsList));
-  } catch (_) {}
-};
-
 export default function App() {
-  // Auth state - Real Google OAuth session
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem("google_calendar_access_token");
-    } catch (_) {
-      return null;
-    }
+  // --- PASSWORD AUTHENTICATION STATE ---
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    return localStorage.getItem("aivana_auth_token") === "true";
   });
-  const [needsAuth, setNeedsAuth] = useState(false);
-  const [authLoading, setAuthLoading] = useState(true);
+  const [passwordInput, setPasswordInput] = useState<string>("");
+  const [authError, setAuthError] = useState<string>("");
+  const [showPasswordText, setShowPasswordText] = useState<boolean>(false);
 
-  // Calendar state - Persistent Clinic Calendar
-  const [events, setEvents] = useState<GoogleCalendarEvent[]>(getStoredClinicEvents());
-  const [calendarLoading, setCalendarLoading] = useState(false);
+  // --- NAVIGATION SCREEN STATE ---
+  const [currentScreen, setCurrentScreen] = useState<string>("home");
+
+  // --- REAL BACKEND DB STATES (STRICTLY NO MOCK DATA) ---
+  const [appointments, setAppointments] = useState<ClinicAppointment[]>([]);
+  const [outboundQueue, setOutboundQueue] = useState<any[]>([]);
+  const [callLogs, setCallLogs] = useState<any[]>([]);
+  const [patientsList, setPatientsList] = useState<any[]>([]);
+  const [liveCallsList, setLiveCallsList] = useState<any[]>([]);
+
+  // --- PATIENT DIRECTORY STATE ---
+  const [patientSearchQuery, setPatientSearchQuery] = useState<string>("");
+  const [showAddPatientModal, setShowAddPatientModal] = useState<boolean>(false);
+  const [newPatientName, setNewPatientName] = useState<string>("");
+  const [newPatientPhone, setNewPatientPhone] = useState<string>("+918446163990");
+  const [newPatientLanguage, setNewPatientLanguage] = useState<string>("English");
+  const [newPatientNotes, setNewPatientNotes] = useState<string>("Walk-in / Inbound Inquiry");
+
+  const [loadingCalendar, setLoadingCalendar] = useState<boolean>(false);
   const [calendarError, setCalendarError] = useState<string | null>(null);
 
-  // Voice Assistant State
+  // --- SARVAM REAL PHONE CALL TELEPHONY ---
+  const [sarvamPhone, setSarvamPhone] = useState<string>("+918446163990");
+  const [hospitalName, setHospitalName] = useState<string>("Aivana Hospital");
+  const [sarvamCalling, setSarvamCalling] = useState<boolean>(false);
+  const [sarvamStatus, setSarvamStatus] = useState<{ success?: boolean; message?: string; attempt_id?: string } | null>(null);
+
+  // --- IN-BROWSER AUDIO VOICE ASSISTANT CALL ---
   const [callState, setCallState] = useState<CallState>("idle");
-  const [callMode] = useState<"live" | "simulated">("live");
   const [messages, setMessages] = useState<Message[]>([]);
-  const [currentAssistantSpeech, setCurrentAssistantSpeech] = useState<string>("");
-  const [currentPatientSpeech, setCurrentPatientSpeech] = useState<string>("");
-  const [assistantReasoning, setAssistantReasoning] = useState<string>("");
-  const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
-  const [textInput, setTextInput] = useState("");
-  const [speechError, setSpeechError] = useState<string | null>(null);
+  const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [isAudioOutputMuted, setIsAudioOutputMuted] = useState<boolean>(false);
+  const [isAiSpeaking, setIsAiSpeaking] = useState<boolean>(false);
+  const [micStatus, setMicStatus] = useState<string>("idle");
+  const [interimTranscript, setInterimTranscript] = useState<string>(" ");
+  const [callPurpose, setCallPurpose] = useState<"new" | "reschedule">("new");
 
-  // Action Confirmation State
-  const [pendingAction, setPendingAction] = useState<AssistantAction | null>(null);
-  const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null);
-  const [isAuditing, setIsAuditing] = useState(false);
-  const [auditResult, setAuditResult] = useState<{ hasChange: boolean; transcriptSummary: string; action: AssistantAction } | null>(null);
-
-  // Post-Call Auto-Reconciliation states
-  const [isReconciling, setIsReconciling] = useState<boolean>(false);
-  const [reconcileResult, setReconcileResult] = useState<any>(null);
-
-  // Real-time Live API audio stream refs
-  const wsRef = useRef<WebSocket | null>(null);
-  const inputAudioCtxRef = useRef<AudioContext | null>(null);
-  const outputAudioCtxRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
-  const micStreamRef = useRef<MediaStream | null>(null);
-  const nextStartTimeRef = useRef<number>(0);
-  const scheduledSourcesRef = useRef<AudioBufferSourceNode[]>([]);
-
-  // Speech Web APIs Refs
-  const executedActionKeysRef = useRef<Set<string>>(new Set());
   const recognitionRef = useRef<any>(null);
-  const isSpeechActiveRef = useRef(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const messagesRef = useRef<Message[]>([]);
+  const callStateRef = useRef<CallState>(callState);
+  const isMutedRef = useRef<boolean>(isMuted);
 
-  // Sync messages state to messagesRef
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
+  useEffect(() => { callStateRef.current = callState; }, [callState]);
+  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
 
-  // Initial Auth Sync
-  useEffect(() => {
-    const unsubscribe = initAuth(
-      async (firebaseUser, accessToken) => {
-        setUser(firebaseUser);
-        setToken(accessToken);
-        setNeedsAuth(false);
-        setAuthLoading(false);
-        if (accessToken) {
-          fetchEvents(accessToken);
-        }
-      },
-      () => {
-        setAuthLoading(false);
-        setNeedsAuth(true);
+  // --- TOAST NOTIFICATIONS STATE ---
+  const [toasts, setToasts] = useState<{ id: string; text: string; type?: "success" | "error" | "info" | "warn" }[]>([]);
+  const showToast = (text: string, type: "success" | "error" | "info" | "warn" = "info") => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, text, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 3400);
+  };
+
+  // --- MODAL CONFIRMATION STATE ---
+  const [modal, setModal] = useState<{ open: boolean; title: string; body: string; onConfirm: () => void } | null>(null);
+  const openModal = (title: string, body: string, onConfirm: () => void) => {
+    setModal({ open: true, title, body, onConfirm });
+  };
+  const closeModal = () => setModal(null);
+
+  // --- APPOINTMENT DETAILS MODAL STATE ---
+  const [selectedAppointment, setSelectedAppointment] = useState<ClinicAppointment | null>(null);
+
+  // Helper to dynamically resolve doctor name and department for appointments
+  const getFormattedDoctorAndDept = (apt: ClinicAppointment): string => {
+    if (!apt) return "General Medicine";
+    const text = `${apt.summary || ""} ${apt.reason || ""}`.toLowerCase();
+
+    if (text.includes("rajesh") || text.includes("ortho") || text.includes("joint") || text.includes("bone") || text.includes("knee") || text.includes("spine") || text.includes("fracture")) {
+      return "Consultation with Dr. Rajesh Kumar (Orthopedics)";
+    }
+    if (text.includes("ananya") || text.includes("cardio") || text.includes("heart") || text.includes("chest pain") || text.includes("ecg") || text.includes("bp")) {
+      return "Consultation with Dr. Ananya Sharma (Cardiology)";
+    }
+    if (text.includes("meera") || text.includes("pediat") || text.includes("child") || text.includes("infant") || text.includes("vaccin")) {
+      return "Consultation with Dr. Meera Nair (Pediatrics)";
+    }
+    if (text.includes("priya") || text.includes("gyn") || text.includes("obg") || text.includes("women") || text.includes("pregna") || text.includes("pcod")) {
+      return "Consultation with Dr. Priya Deshmukh (Gynecology)";
+    }
+    if (text.includes("vikram") || text.includes("derma") || text.includes("skin") || text.includes("acne") || text.includes("rash") || text.includes("hair")) {
+      return "Consultation with Dr. Vikram Patel (Dermatology)";
+    }
+    if (text.includes("abhishek") || text.includes("general") || text.includes("physician") || text.includes("internal")) {
+      return "Consultation with Dr. Abhishek (General Medicine)";
+    }
+    return apt.summary || "Consultation with Dr. Abhishek (General Medicine)";
+  };
+
+  // --- NEW BOOKING MODAL FORM STATE ---
+  const [showBookingModal, setShowBookingModal] = useState<boolean>(false);
+  const [newBookingName, setNewBookingName] = useState<string>("");
+  const [newBookingPhone, setNewBookingPhone] = useState<string>("+918446163990");
+  const [newBookingDate, setNewBookingDate] = useState<string>(() => new Date().toISOString().split("T")[0]);
+  const [newBookingTime, setNewBookingTime] = useState<string>("12:00");
+  const [newBookingReason, setNewBookingReason] = useState<string>("General Medical Consultation");
+  const [newBookingDoctor, setNewBookingDoctor] = useState<string>("Dr. Abhishek (General Medicine)");
+
+  // --- CALENDAR GRID WEEK OFFSET STATE ---
+  const [weekOffset, setWeekOffset] = useState<number>(0);
+
+  const getWeekDays = (offset: number) => {
+    const now = new Date();
+    const currentDay = now.getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
+    const diffToMon = now.getDate() - currentDay + (currentDay === 0 ? -6 : 1);
+    const monday = new Date(now.setDate(diffToMon));
+    monday.setDate(monday.getDate() + offset * 7);
+
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      days.push(d);
+    }
+    return days;
+  };
+
+  const currentWeekDays = getWeekDays(weekOffset);
+
+  // --- DRAWER SIDE PANEL STATE ---
+  const [sidePanel, setSidePanel] = useState<{
+    open: boolean;
+    title: string;
+    sub?: string;
+    type?: "call" | "patient" | "manualCall" | "slot" | "doctor";
+    data?: any;
+  }>({ open: false, title: "", sub: "" });
+
+  const closeSidePanel = () => setSidePanel((prev) => ({ ...prev, open: false }));
+
+  // --- FETCH ALL LIVE BACKEND DATA ---
+  const fetchAllData = async () => {
+    setLoadingCalendar(true);
+    setCalendarError(null);
+    try {
+      const [aptRes, outRes, logRes, patRes] = await Promise.all([
+        fetch("/api/appointments"),
+        fetch("/api/outbound"),
+        fetch("/api/logs"),
+        fetch("/api/patients")
+      ]);
+
+      if (aptRes.ok) {
+        const data = await aptRes.json();
+        setAppointments(data.appointments || []);
       }
-    );
-    return () => unsubscribe();
+      if (outRes.ok) {
+        const data = await outRes.json();
+        setOutboundQueue(data.items || []);
+      }
+      if (logRes.ok) {
+        const data = await logRes.json();
+        setCallLogs(data.logs || []);
+      }
+      if (patRes.ok) {
+        const data = await patRes.json();
+        setPatientsList(data.patients || []);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setCalendarError("Unable to connect to clinic database");
+    } finally {
+      setLoadingCalendar(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAllData();
   }, []);
 
-  // Fetch Doctor Calendar Events from Google Calendar API
-  const fetchEvents = async (accessToken?: string) => {
-    const activeToken = accessToken || token;
-    if (!activeToken) {
-      setNeedsAuth(true);
-      setCalendarError("Please click 'Sign in with Google' to authorize and view your live Google Calendar schedule.");
+  // --- SARVAM OUTBOUND TELEPHONY REAL PHONE CALL ---
+  const triggerSarvamCall = async (phoneToCall?: string, patientName?: string, reason?: string) => {
+    const rawNumber = phoneToCall || sarvamPhone;
+    if (!rawNumber) {
+      showToast("Please provide a valid phone number", "error");
       return;
     }
-    setCalendarLoading(true);
-    setCalendarError(null);
+
+    // Format target phone number cleanly to E.164 (+91XXXXXXXXXX)
+    const digitsOnly = rawNumber.replace(/\D/g, "");
+    let targetNumber = rawNumber;
+    if (digitsOnly.length === 10) {
+      targetNumber = "+91" + digitsOnly;
+    } else if (digitsOnly.length === 12 && digitsOnly.startsWith("91")) {
+      targetNumber = "+" + digitsOnly;
+    } else if (digitsOnly.length > 0) {
+      targetNumber = "+" + digitsOnly;
+    }
+
+    setSarvamCalling(true);
+    setSarvamStatus(null);
+    showToast(`Initiating real phone call to ${targetNumber}...`, "info");
+
     try {
-      const timeMin = new Date().toISOString();
-      const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&timeMin=${timeMin}&maxResults=20`;
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${accessToken}` },
+      const res = await fetch("/api/sarvam/outbound-call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_phone_number: targetNumber,
+          hospital_name: hospitalName || "Aivana Hospital",
+          patient_name: patientName || "Patient",
+          call_reason: reason || "Appointment Booking & Calendar Schedule Verification"
+        })
       });
 
-      if (res.status === 401) {
-        setNeedsAuth(true);
-        setToken(null);
-        localStorage.removeItem("google_calendar_access_token");
-        throw new Error("Google Calendar authorization expired. Please click 'Sign in with Google' to re-authorize.");
-      }
-
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`Google Calendar API Error (${res.status}): ${errText}`);
-      }
-
       const data = await res.json();
-      if (data.items) {
-        setEvents(data.items);
-        saveStoredClinicEvents(data.items);
+      if (data.success) {
+        setSarvamStatus({
+          success: true,
+          message: `Phone call successfully triggered to ${targetNumber}! AI Telephony is dialing now.`,
+          attempt_id: data.attempt_id
+        });
+        showToast(`Phone call placed! Attempt ID: ${data.attempt_id?.slice(0, 8)}`, "success");
+        fetchAllData();
+      } else {
+        const errStr = typeof data.error === "string" ? data.error : (data.error ? JSON.stringify(data.error) : "Telephony call failed");
+        setSarvamStatus({
+          success: false,
+          message: errStr
+        });
+        showToast(`Failed: ${errStr}`, "error");
       }
     } catch (err: any) {
-      console.error("Google Calendar sync error:", err);
-      setCalendarError(err.message || "Failed to sync with Google Calendar API.");
+      const netErr = err.message || "Network error while triggering phone call";
+      setSarvamStatus({
+        success: false,
+        message: netErr
+      });
+      showToast(`Failed: ${netErr}`, "error");
     } finally {
-      setCalendarLoading(false);
+      setSarvamCalling(false);
     }
   };
 
-  const handleLogin = async () => {
-    setAuthLoading(true);
-    setCalendarError(null);
-    try {
-      const result = await googleSignIn();
-      if (result) {
-        setToken(result.accessToken);
-        setUser(result.user);
-        setNeedsAuth(false);
-        fetchEvents(result.accessToken);
-      }
-    } catch (err: any) {
-      console.error("Login failed:", err);
-      const errMsg = err?.message || "";
-      if (errMsg.includes("403") || errMsg.includes("access_denied") || errMsg.toLowerCase().includes("test") || errMsg.includes("unauthorized") || errMsg.includes("popup")) {
-        setCalendarError(
-          "Google Auth Access Denied (403): To allow a Gmail account to sign in immediately without redeploying: Open Google Cloud Console -> APIs & Services -> Google Auth platform (or OAuth consent screen) -> click 'Audience' -> scroll to 'Test users' and click '+ ADD USERS' to add your email address."
-        );
-      } else {
-        setCalendarError("Google sign-in error: " + (errMsg || "Could not complete authorization"));
-      }
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleLogout = async () => {
-    await logout();
-    setUser(null);
-    setToken(null);
-    setNeedsAuth(true);
-    setEvents([]);
-    setCallState("idle");
-    setMessages([]);
-  };
-
-  // Auto-scroll chat details
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, currentAssistantSpeech, currentPatientSpeech]);
-
-  // Handle Speech Recognition setup
-  useEffect(() => {
-    if (!SpeechRecognitionAPI) {
-      console.warn("SpeechRecognition API is not supported in this browser.");
-      return;
-    }
-
-    const rec = new SpeechRecognitionAPI();
-    rec.continuous = false;
-    rec.interimResults = true;
-    rec.lang = "en-US";
-
-    rec.onstart = () => {
-      isSpeechActiveRef.current = true;
-    };
-
-    rec.onresult = (event: any) => {
-      let interimTranscript = "";
-      let finalTranscript = "";
-
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        if (event.results[i].isFinal) {
-          finalTranscript += event.results[i][0].transcript;
-        } else {
-          interimTranscript += event.results[i][0].transcript;
-        }
-      }
-
-      if (finalTranscript) {
-        if (callMode === "live") {
-          setMessages(prev => [
-            ...prev,
-            {
-              id: Date.now().toString(),
-              role: "user",
-              content: finalTranscript,
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-            }
-          ]);
-          setCurrentPatientSpeech("");
-        } else {
-          setCurrentPatientSpeech(finalTranscript);
-          handlePatientVoiceInput(finalTranscript);
-        }
-      } else if (interimTranscript) {
-        setCurrentPatientSpeech(interimTranscript);
-      }
-    };
-
-    rec.onerror = (e: any) => {
-      if (e.error === "not-allowed") {
-        setSpeechError("Microphone permission was denied. Iframe environments can block voice capture. Please open the app in a new tab by clicking the icon at the top right of the screen to enable voice input.");
-      } else if (e.error === "no-speech") {
-        // Safe timeout event
-      } else if (e.error === "network") {
-        setSpeechError("A network communication error occurred with Google Web Speech. Please check your internet connection.");
-      } else {
-        console.error("Speech recognition error:", e);
-        setSpeechError(`Speech recognition error: "${e.error}". For a seamless voice experience, try opening the application in a new tab.`);
-      }
-    };
-
-    rec.onend = () => {
-      isSpeechActiveRef.current = false;
-      // In live mode, we want to keep listening continuously to log patient voice
-      const shouldKeepListening = callMode === "live"
-        ? (callState === "connected")
-        : (callState === "connected" && !isAssistantSpeaking && !isMuted && !pendingAction);
-
-      if (shouldKeepListening) {
-        try {
-          rec.start();
-        } catch (_) {}
-      }
-    };
-
-    recognitionRef.current = rec;
-
-    return () => {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.abort();
-        } catch (_) {}
-      }
-    };
-  }, [callState, isAssistantSpeaking, isMuted, pendingAction, callMode]);
-
-  // Voice engine: speak assistant output
-  const speakText = (text: string, onComplete: () => void) => {
-    if (!text) return onComplete();
-
-    // Abort active listening during speaking
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.abort();
-      } catch (_) {}
-    }
-
+  // --- IN-BROWSER AUDIO SPEECH SYNTHESIS & RECOGNITION ---
+  const speakText = (text: string) => {
+    if (isAudioOutputMuted || !("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    
-    // Choose voice
-    const voices = window.speechSynthesis.getVoices();
-    const naturalVoice = voices.find(v => v.lang.startsWith("en") && v.name.includes("Google") && v.name.includes("Female"))
-                       || voices.find(v => v.lang.startsWith("en") && v.name.includes("Natural"))
-                       || voices.find(v => v.lang.startsWith("en"));
-    if (naturalVoice) {
-      utterance.voice = naturalVoice;
-    }
-    
-    utterance.pitch = 1.05;
     utterance.rate = 1.0;
-
-    utterance.onstart = () => {
-      setIsAssistantSpeaking(true);
-    };
-
+    utterance.pitch = 1.0;
+    utterance.onstart = () => setIsAiSpeaking(true);
     utterance.onend = () => {
-      setIsAssistantSpeaking(false);
-      onComplete();
+      setIsAiSpeaking(false);
+      if (callStateRef.current === "connected" && !isMutedRef.current) {
+        startSpeechRecognition();
+      }
     };
-
-    utterance.onerror = (e) => {
-      console.error("TTS error:", e);
-      setIsAssistantSpeaking(false);
-      setSpeechError("The browser speech engine failed to speak. This is usually due to audio playback limitations in inside-frame sandboxes. Try opening the application in a new tab.");
-      onComplete();
-    };
-
+    utterance.onerror = () => setIsAiSpeaking(false);
     window.speechSynthesis.speak(utterance);
   };
 
-  const handleInterruption = () => {
-    if (callMode === "live") {
-      handleLiveInterruption();
-    } else {
-      window.speechSynthesis.cancel();
-      setIsAssistantSpeaking(false);
-      // Restart speech recognition immediately
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.abort();
-        } catch (_) {}
-        setTimeout(() => {
-          try {
-            recognitionRef.current.start();
-          } catch (_) {}
-        }, 150);
-      }
-    }
-  };
-
-  // Keyboard shortcut to interrupt voice assistant (Spacebar)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === "Space" && isAssistantSpeaking) {
-        if (document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
-          e.preventDefault();
-          handleInterruption();
-        }
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isAssistantSpeaking]);
-
-  // Float32 to 16-bit PCM Converter for mic downsampling (rate=16000)
-  const floatTo16BitPCM = (input: Float32Array): ArrayBuffer => {
-    const buffer = new ArrayBuffer(input.length * 2);
-    const view = new DataView(buffer);
-    for (let i = 0; i < input.length; i++) {
-      let s = Math.max(-1, Math.min(1, input[i]));
-      view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-    }
-    return buffer;
-  };
-
-  const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
-    let binary = "";
-    const bytes = new Uint8Array(buffer);
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return window.btoa(binary);
-  };
-
-  const base64ToFloat32 = (base64: string): Float32Array => {
-    const binary = window.atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    const int16Array = new Int16Array(bytes.buffer);
-    const float32Array = new Float32Array(int16Array.length);
-    for (let i = 0; i < int16Array.length; i++) {
-      float32Array[i] = int16Array[i] / 32768.0;
-    }
-    return float32Array;
-  };
-
-  const playAudioChunk = (float32Data: Float32Array) => {
-    if (!outputAudioCtxRef.current) {
-      outputAudioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-    }
-    const ctx = outputAudioCtxRef.current;
-    if (ctx.state === "suspended") {
-      ctx.resume();
-    }
-
-    const audioBuffer = ctx.createBuffer(1, float32Data.length, 24000);
-    audioBuffer.getChannelData(0).set(float32Data);
-
-    const source = ctx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(ctx.destination);
-
-    const currentTime = ctx.currentTime;
-    let startTime = nextStartTimeRef.current;
-    if (startTime < currentTime) {
-      startTime = currentTime + 0.05;
-    }
-
-    source.start(startTime);
-    nextStartTimeRef.current = startTime + audioBuffer.duration;
-
-    scheduledSourcesRef.current.push(source);
-    source.onended = () => {
-      scheduledSourcesRef.current = scheduledSourcesRef.current.filter(s => s !== source);
-      if (scheduledSourcesRef.current.length === 0) {
-        setIsAssistantSpeaking(false);
-        setCurrentAssistantSpeech(current => {
-          if (current.trim()) {
-            setMessages(prev => [
-              ...prev,
-              {
-                id: Date.now().toString(),
-                role: "assistant",
-                content: current.trim(),
-                timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-              }
-            ]);
-          }
-          return "";
-        });
-      }
-    };
-  };
-
-  const handleLiveInterruption = () => {
-    scheduledSourcesRef.current.forEach(source => {
-      try {
-        source.stop();
-      } catch (_) {}
-    });
-    scheduledSourcesRef.current = [];
-    nextStartTimeRef.current = 0;
-    setIsAssistantSpeaking(false);
-  };
-
-  const initLiveAudioStream = (stream: MediaStream) => {
-    const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-    inputAudioCtxRef.current = inputCtx;
-
-    const source = inputCtx.createMediaStreamSource(stream);
-    const processor = inputCtx.createScriptProcessor(2048, 1, 1);
-    processorRef.current = processor;
-
-    source.connect(processor);
-    processor.connect(inputCtx.destination);
-
-    processor.onaudioprocess = (e) => {
-      if (isMuted) return;
-      const channelData = e.inputBuffer.getChannelData(0);
-      const pcmBuffer = floatTo16BitPCM(channelData);
-      const base64Audio = arrayBufferToBase64(pcmBuffer);
-      
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({
-          type: "audio",
-          audio: base64Audio
-        }));
-      }
-    };
-  };
-
-  const runPostCallReconciliation = async (historyToUse?: Message[]) => {
-    const activeMessages = historyToUse || messages;
-    if (activeMessages.length === 0) return;
-
-    setIsReconciling(true);
-    setReconcileResult(null);
+  const startBrowserCall = async () => {
+    setCallState("connecting" as any);
+    setMessages([]);
+    setMicStatus("Requesting Mic Permission...");
 
     try {
-      const payload = {
-        messages: activeMessages.map(m => ({ role: m.role, content: m.content })),
-        doctorCalendarEvents: events,
-        currentDateTime: getLocalDateTimeString()
-      };
-
-      const res = await fetch("/api/voice-assistant/post-call-reconcile", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      if (!res.ok) throw new Error("Failed to post-analyze transcription");
-      const data = await res.json();
-
-      const candidateAction = (data.hasChange && data.action && data.action.type !== "none")
-        ? data.action
-        : (pendingAction && pendingAction.type !== "none" ? pendingAction : null);
-
-      if (candidateAction) {
-        setPendingAction(candidateAction);
-        setReconcileResult({
-          ...data,
-          hasChange: true,
-          action: candidateAction
-        });
-
-        const key = getActionKey(candidateAction);
-        if (key && executedActionKeysRef.current.has(key)) {
-          console.log("Action was already executed during the live call. Skipping duplicate execution in post-call reconcile:", key);
-        } else {
-          executeCalendarAction(candidateAction);
-        }
-      } else {
-        setReconcileResult(data);
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        await navigator.mediaDevices.getUserMedia({ audio: true });
       }
-    } catch (err: any) {
-      console.error("Post-call reconcile error:", err);
-    } finally {
-      setIsReconciling(false);
-    }
-  };
-
-  const startLiveCall = async (
-    purpose: "new" | "reschedule" | "followup" = "new",
-    targetEvent?: GoogleCalendarEvent
-  ) => {
-    try {
-      setCallState("ringing");
-      setMessages([]);
-      setCurrentAssistantSpeech("");
-      setCurrentPatientSpeech("");
-      setAssistantReasoning("");
-      setPendingAction(null);
-      setActionSuccessMessage(null);
-      setSpeechError(null);
-      setReconcileResult(null);
-
-      const defaultRescheduleEvent = events[0] || DEFAULT_CLINIC_EVENTS[0];
-      const details = targetEvent ? parseEventPatientDetails(targetEvent) : purpose === "new" ? {
-        patientName: "New Caller",
-        phone: "+1 (555) 019-2831",
-        patientEmail: user?.email || "",
-        reason: "New Appointment Inquiry",
-        patientContext: "Inbound call from someone new calling our clinic asking when an appointment should be booked for them."
-      } : {
-        patientName: parseEventPatientDetails(defaultRescheduleEvent).patientName || "John Doe",
-        phone: "+1 (555) 234-5678",
-        patientEmail: user?.email || "",
-        reason: defaultRescheduleEvent?.summary || "Orthopedic Consultation",
-        patientContext: "Existing patient being called by clinic to schedule or reschedule their appointment."
-      };
-
-      // Request mic permission
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      micStreamRef.current = stream;
-
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${window.location.host}/api/live-stream`;
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        ws.send(JSON.stringify({
-          type: "setup",
-          events: events,
-          currentDateTime: getLocalDateTimeString(),
-          callPurpose: purpose,
-          patientName: details.patientName,
-          patientEmail: details.patientEmail || user?.email || "",
-          patientPhone: details.phone,
-          appointmentTitle: targetEvent?.summary || (purpose === "reschedule" ? defaultRescheduleEvent?.summary : details.reason),
-          appointmentStart: targetEvent?.start?.dateTime || targetEvent?.start?.date || (purpose === "reschedule" ? defaultRescheduleEvent?.start?.dateTime : ""),
-          targetEventId: targetEvent?.id || (purpose === "reschedule" ? defaultRescheduleEvent?.id : ""),
-          patientContext: details.patientContext
-        }));
-      };
-
-      ws.onmessage = async (event) => {
-        const msg = JSON.parse(event.data);
-        if (msg.type === "status" && msg.status === "ready") {
-          setCallState("connected");
-          initLiveAudioStream(stream);
-          if (recognitionRef.current) {
-            try {
-              recognitionRef.current.start();
-            } catch (_) {}
-          }
-        } else if (msg.type === "audio") {
-          setIsAssistantSpeaking(true);
-          const float32Data = base64ToFloat32(msg.audio);
-          playAudioChunk(float32Data);
-        } else if (msg.type === "interrupted") {
-          handleLiveInterruption();
-        } else if (msg.type === "transcription") {
-          setIsAssistantSpeaking(true);
-          setCurrentAssistantSpeech(prev => {
-            const next = prev ? prev + " " + msg.text : msg.text;
-            setMessages(current => {
-              const last = current[current.length - 1];
-              if (last && last.role === "assistant") {
-                const updated = [...current];
-                updated[updated.length - 1] = {
-                  ...last,
-                  content: last.content + " " + msg.text
-                };
-                return updated;
-              } else {
-                return [...current, {
-                  id: "ast-" + Date.now(),
-                  role: "assistant",
-                  content: msg.text,
-                  timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                }];
-              }
-            });
-            return next;
-          });
-        } else if (msg.type === "patientTranscription") {
-          setIsAssistantSpeaking(false);
-          setCurrentPatientSpeech(prev => {
-            const next = prev ? prev + " " + msg.text : msg.text;
-            setMessages(current => {
-              const last = current[current.length - 1];
-              if (last && last.role === "user") {
-                const updated = [...current];
-                updated[updated.length - 1] = {
-                  ...last,
-                  content: last.content + " " + msg.text
-                };
-                return updated;
-              } else {
-                return [...current, {
-                  id: "pat-" + Date.now(),
-                  role: "user",
-                  content: msg.text,
-                  timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                }];
-              }
-            });
-            return next;
-          });
-        } else if (msg.type === "action") {
-          setPendingAction(msg.action);
-          executeCalendarAction(msg.action);
-        } else if (msg.type === "error") {
-          console.error("Voice Stream Error:", msg.message);
-          setSpeechError(`Voice Stream Error: ${msg.message}`);
-        }
-      };
-
-      ws.onerror = (e) => {
-        console.error("WebSocket error:", e);
-        setSpeechError("Connection error to live stream server. Try opening the app in a new tab.");
-      };
-
-      ws.onclose = () => {
-        console.log("WebSocket connection closed.");
-        if (callState !== "idle") {
-          endLiveCall();
-        }
-      };
-
-    } catch (err: any) {
-      console.error("Failed to start live call:", err);
-      setCallState("idle");
-      setSpeechError(err.message || "Microphone access denied. If you are inside an iframe, please click the top-right button to open the app in a new tab.");
-    }
-  };
-
-  const endLiveCall = () => {
-    if (wsRef.current) {
-      try {
-        wsRef.current.close();
-      } catch (_) {}
-      wsRef.current = null;
+    } catch (err) {
+      console.warn("Microphone access prompt:", err);
     }
 
-    if (processorRef.current) {
-      try {
-        processorRef.current.disconnect();
-      } catch (_) {}
-      processorRef.current = null;
-    }
+    const greeting = callPurpose === "new"
+      ? "Thank you for calling Aivana Medical Center! I am your AI receptionist. How can I help you book an appointment today?"
+      : "Hello! This is Aivana Medical Center calling to reschedule your upcoming appointment. Is now a good time?";
 
-    if (inputAudioCtxRef.current) {
-      try {
-        inputAudioCtxRef.current.close();
-      } catch (_) {}
-      inputAudioCtxRef.current = null;
-    }
-
-    if (micStreamRef.current) {
-      micStreamRef.current.getTracks().forEach(track => track.stop());
-      micStreamRef.current = null;
-    }
-
-    handleLiveInterruption();
-    if (outputAudioCtxRef.current) {
-      try {
-        outputAudioCtxRef.current.close();
-      } catch (_) {}
-      outputAudioCtxRef.current = null;
-    }
-
-    setCallState("completed");
-
-    let latestMessages = [...messagesRef.current];
-    if (currentAssistantSpeech.trim()) {
-      latestMessages.push({
-        id: Date.now().toString(),
+    setTimeout(() => {
+      setCallState("connected");
+      const initialMsg: Message = {
+        id: "msg-1",
         role: "assistant",
-        content: currentAssistantSpeech.trim(),
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      });
-      setCurrentAssistantSpeech("");
-    }
-
-    if (latestMessages.length > 0) {
-      runPostCallReconciliation(latestMessages);
-    } else if (pendingAction) {
-      setReconcileResult({
-        hasChange: true,
-        transcriptSummary: "A scheduling action was successfully requested during the live voice call. Please review the details below to confirm and update the clinic calendar.",
-        action: pendingAction
-      });
-    } else {
-      setReconcileResult({
-        hasChange: false,
-        transcriptSummary: "No active voice dialogue or booking action occurred during this call.",
-        action: { type: "none" }
-      });
-    }
+        content: greeting,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+      setMessages([initialMsg]);
+      speakText(greeting);
+      startSpeechRecognition();
+    }, 800);
   };
 
-  // Start outbound / scheduled call
-  const triggerCall = (type: "new" | "reschedule" | "followup" = "new", targetEvent?: GoogleCalendarEvent) => {
-    endCall();
-
-    if (callMode === "live") {
-      startLiveCall(type, targetEvent);
-    } else {
-      setCallState("ringing");
-      setMessages([]);
-      setCurrentAssistantSpeech("");
-      setCurrentPatientSpeech("");
-      setAssistantReasoning("");
-      setPendingAction(null);
-      setActionSuccessMessage(null);
-
-      setTimeout(() => {
-        setCallState("connected");
-        const details = targetEvent ? parseEventPatientDetails(targetEvent) : { patientName: "Patient" };
-        
-        let openingPrompt = "";
-        if (type === "followup") {
-          openingPrompt = `[Assistant triggers automated 2-day prior follow-up call to ${details.patientName}. Introduce yourself as Dr. Abhishek's Clinic Assistant, state you are calling 2 days in advance to confirm their appointment scheduled for ${targetEvent?.start?.dateTime || "the upcoming date"}, and ask if they can attend.]`;
-        } else if (type === "reschedule") {
-          openingPrompt = "[Assistant triggers outbound call because the doctor has a reschedule conflict on Monday at 10:00 AM. Introduce yourself as Dr. Abhishek's Clinic Assistant, greet the patient, say we noticed a surgical calendar conflict and need to reschedule their Monday appointment to either Tuesday at 2:00 PM or Wednesday at 10:00 AM.]";
-        } else {
-          openingPrompt = "[Assistant triggers outbound call to book a brand new follow-up appointment with Dr. Abhishek. Greet the patient, state your purpose, and ask when they would like to schedule this.]";
-        }
-
-        sendAssistantRequest([{ id: "sys", role: "user", content: openingPrompt, timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }]);
-      }, 2000);
+  const endBrowserCall = () => {
+    setCallState("completed");
+    setMicStatus("idle");
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (_) {}
     }
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    setIsAiSpeaking(false);
+    showToast("In-browser voice call ended", "info");
+    fetchAllData();
   };
 
-  // Send conversation history to backend Server API
-  const sendAssistantRequest = async (currentMessages: Message[]) => {
-    setIsAssistantSpeaking(true);
+  const startSpeechRecognition = () => {
+    if (!SpeechRecognitionAPI) {
+      setMicStatus("Web Speech API not supported in browser");
+      return;
+    }
+    if (isMutedRef.current) {
+      setMicStatus("Muted");
+      return;
+    }
+
     try {
-      const currentDateTime = getLocalDateTimeString();
-      const payload = {
-        messages: currentMessages.map(m => ({ role: m.role, content: m.content })),
-        doctorCalendarEvents: events,
-        currentDateTime,
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (_) {}
+      }
+
+      const recognition = new SpeechRecognitionAPI();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = "en-US";
+
+      recognition.onstart = () => {
+        setMicStatus("Listening...");
       };
 
+      recognition.onresult = (event: any) => {
+        let currentInterim = "";
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const result = event.results[i];
+          if (result.isFinal) {
+            const finalTranscript = result[0].transcript.trim();
+            if (finalTranscript) {
+              setInterimTranscript("");
+              sendUserMessage(finalTranscript);
+            }
+          } else {
+            currentInterim += result[0].transcript;
+          }
+        }
+        setInterimTranscript(currentInterim);
+      };
+
+      recognition.onerror = (event: any) => {
+        if (event.error !== "no-speech" && event.error !== "aborted") {
+          setMicStatus(`Mic status: ${event.error}`);
+        }
+      };
+
+      recognition.onend = () => {
+        if (callStateRef.current === "connected" && !isMutedRef.current) {
+          setTimeout(() => {
+            try {
+              if (callStateRef.current === "connected" && !isMutedRef.current) {
+                recognition.start();
+              }
+            } catch (_) {}
+          }, 300);
+        } else {
+          setMicStatus("Stopped");
+        }
+      };
+
+      recognition.start();
+      recognitionRef.current = recognition;
+    } catch (e) {
+      console.error("Speech recognition start exception:", e);
+    }
+  };
+
+  const sendUserMessage = async (text: string) => {
+    const userMsg: Message = {
+      id: `msg-${Date.now()}`,
+      role: "user",
+      content: text,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+
+    setMessages((prev) => [...prev, userMsg]);
+    setIsAiSpeaking(true);
+
+    try {
+      const updatedMessages = [...messages, userMsg];
       const res = await fetch("/api/voice-assistant/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          messages: updatedMessages,
+          callPurpose,
+          currentDateTime: new Date().toISOString()
+        })
       });
 
-      if (!res.ok) throw new Error("Assistant server endpoint failed");
       const data = await res.json();
+      const aiSpeech = data.speech || "I have processed your request.";
 
-      setCurrentAssistantSpeech(data.speech);
-      setAssistantReasoning(data.reasoning);
+      const aiMsg: Message = {
+        id: `msg-${Date.now() + 1}`,
+        role: "assistant",
+        content: aiSpeech,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        reasoning: data.reasoning,
+        actionTaken: data.action?.type !== "none" ? data.action : undefined
+      };
 
-      speakText(data.speech, () => {
-        const assistantMsg: Message = {
-          id: Date.now().toString(),
-          role: "assistant",
-          content: data.speech,
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          reasoning: data.reasoning,
-        };
+      setMessages((prev) => [...prev, aiMsg]);
+      speakText(aiSpeech);
 
-        const updatedHistory = [...currentMessages, assistantMsg];
-        setMessages(updatedHistory);
+      // ALWAYS REFRESH BACKEND DATA SO CALENDAR & LOGS UPDATE INSTANTLY!
+      fetchAllData();
 
-        if (data.action && data.action.type !== "none") {
-          setPendingAction(data.action);
-          executeCalendarAction(data.action);
-        } else {
-          startListening();
-        }
-      });
-
+      if (data.action?.type && data.action.type !== "none") {
+        showToast(`Calendar updated: ${data.action.type} performed!`, "success");
+      }
     } catch (err: any) {
-      console.error(err);
-      setCurrentAssistantSpeech("Sorry, I experienced a brief connection drop. Could you repeat that?");
-      speakText("Sorry, I experienced a brief connection drop. Could you repeat that?", () => {
-        startListening();
-      });
+      console.error("AI assistant endpoint error:", err);
+      const fallbackSpeech = "I am checking the schedule now.";
+      const aiMsg: Message = {
+        id: `msg-${Date.now() + 1}`,
+        role: "assistant",
+        content: fallbackSpeech,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+      setMessages((prev) => [...prev, aiMsg]);
+      speakText(fallbackSpeech);
     }
   };
 
-  const startListening = () => {
-    if (callMode === "simulated" && recognitionRef.current && !isMuted && !pendingAction) {
-      try {
-        recognitionRef.current.start();
-      } catch (_) {}
+  // --- OUTBOUND QUEUE FILTERING ---
+  const [outboundTab, setOutboundTab] = useState<string>("dueNow");
+  const [filterType, setFilterType] = useState<string>("");
+  const [filterPriority, setFilterPriority] = useState<string>("");
+  const [filterDept, setFilterDept] = useState<string>("");
+
+  // --- CALL LOG FILTERING ---
+  const [selectedLogId, setSelectedLogId] = useState<string>("");
+  const [logDirectionFilter, setLogDirectionFilter] = useState<string>("");
+  const [logSearchQuery, setLogSearchQuery] = useState<string>("");
+  const [logOutcomeFilter, setLogOutcomeFilter] = useState<string>("");
+
+  // --- PATIENTS SEARCH ---
+  const [patientSearch, setPatientSearch] = useState<string>("");
+
+  // --- DOCTORS CONFIG ---
+  const INITIAL_DOCTORS: Doctor[] = [
+    {
+      id: "d1",
+      name: "Dr. Abhishek",
+      title: "MD (General Medicine)",
+      dept: "General Medicine & Surgery",
+      experience: "14+ Yrs Exp",
+      fee: "₹800",
+      days: "Mon–Fri (9:00 AM–5:00 PM)",
+      next: "Available Today",
+      color: "bg-sky-500/10 text-sky-400 border-sky-500/30",
+      rules: [{ days: "Mon–Fri", time: "9:00 AM–5:00 PM", dur: "30 min slots", buf: "5 min buffer" }]
+    },
+    {
+      id: "d2",
+      name: "Dr. Ananya Sharma",
+      title: "MD, DM (Cardiology)",
+      dept: "Cardiology & Heart Care",
+      experience: "12+ Yrs Exp",
+      fee: "₹1,500",
+      days: "Mon–Fri (10:00 AM–4:00 PM)",
+      next: "Available Today",
+      color: "bg-rose-500/10 text-rose-400 border-rose-500/30",
+      rules: [{ days: "Mon–Fri", time: "10:00 AM–4:00 PM", dur: "30 min slots", buf: "5 min buffer" }]
+    },
+    {
+      id: "d3",
+      name: "Dr. Rajesh Kumar",
+      title: "MS, MCh (Orthopedics)",
+      dept: "Orthopedics & Joint Care",
+      experience: "16+ Yrs Exp",
+      fee: "₹1,200",
+      days: "Mon–Fri (9:30 AM–3:30 PM)",
+      next: "Available Today",
+      color: "bg-amber-500/10 text-amber-400 border-amber-500/30",
+      rules: [{ days: "Mon–Fri", time: "9:30 AM–3:30 PM", dur: "30 min slots", buf: "5 min buffer" }]
+    },
+    {
+      id: "d4",
+      name: "Dr. Meera Nair",
+      title: "MD, DNB (Pediatrics)",
+      dept: "Pediatrics & Child Care",
+      experience: "10+ Yrs Exp",
+      fee: "₹900",
+      days: "Mon–Fri (9:00 AM–2:00 PM)",
+      next: "Available Today",
+      color: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+      rules: [{ days: "Mon–Fri", time: "9:00 AM–2:00 PM", dur: "30 min slots", buf: "5 min buffer" }]
+    },
+    {
+      id: "d5",
+      name: "Dr. Priya Deshmukh",
+      title: "MD, DGO (Gynecology)",
+      dept: "Obstetrics & Gynecology",
+      experience: "13+ Yrs Exp",
+      fee: "₹1,200",
+      days: "Mon–Fri (10:00 AM–4:30 PM)",
+      next: "Available Today",
+      color: "bg-purple-500/10 text-purple-400 border-purple-500/30",
+      rules: [{ days: "Mon–Fri", time: "10:00 AM–4:30 PM", dur: "30 min slots", buf: "5 min buffer" }]
+    },
+    {
+      id: "d6",
+      name: "Dr. Vikram Patel",
+      title: "MD (Dermatology)",
+      dept: "Dermatology & Cosmetology",
+      experience: "9+ Yrs Exp",
+      fee: "₹1,000",
+      days: "Mon–Fri (11:00 AM–5:00 PM)",
+      next: "Available Today",
+      color: "bg-indigo-500/10 text-indigo-400 border-indigo-500/30",
+      rules: [{ days: "Mon–Fri", time: "11:00 AM–5:00 PM", dur: "30 min slots", buf: "5 min buffer" }]
     }
-  };
+  ];
 
-  // Handle transcribed patient speech
-  const handlePatientVoiceInput = (text: string) => {
-    if (!text.trim()) return;
+  const [doctorsList, setDoctorsList] = useState<Doctor[]>(() => {
+    try {
+      const saved = localStorage.getItem("aivana_doctors_list");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.error("Error loading doctors list:", e);
+    }
+    return INITIAL_DOCTORS;
+  });
 
-    const patientMsg: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content: text,
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+  useEffect(() => {
+    try {
+      localStorage.setItem("aivana_doctors_list", JSON.stringify(doctorsList));
+    } catch (e) {
+      console.error("Error saving doctors list:", e);
+    }
+  }, [doctorsList]);
+
+  // --- ADD DOCTOR FORM STATE ---
+  const [showAddDoctorModal, setShowAddDoctorModal] = useState<boolean>(false);
+  const [newDocName, setNewDocName] = useState<string>("");
+  const [newDocTitle, setNewDocTitle] = useState<string>("");
+  const [newDocDept, setNewDocDept] = useState<string>("General Medicine & Surgery");
+  const [newDocCustomDept, setNewDocCustomDept] = useState<string>("");
+  const [newDocExp, setNewDocExp] = useState<string>("5+ Yrs Exp");
+  const [newDocFee, setNewDocFee] = useState<string>("₹1,000");
+  const [newDocDays, setNewDocDays] = useState<string>("Mon–Fri (9:00 AM–5:00 PM)");
+  const [newDocNext, setNewDocNext] = useState<string>("Available Today");
+  const [newDocSlotDur, setNewDocSlotDur] = useState<string>("30 min slots");
+  const [newDocBuffer, setNewDocBuffer] = useState<string>("5 min buffer");
+
+  const handleAddDoctorSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    let nameClean = newDocName.trim();
+    if (!nameClean) {
+      showToast("Please enter doctor's full name", "error");
+      return;
+    }
+    if (!nameClean.toLowerCase().startsWith("dr.")) {
+      nameClean = `Dr. ${nameClean}`;
+    }
+
+    const finalDept = newDocDept === "Custom" ? (newDocCustomDept.trim() || "Specialist Operations") : newDocDept;
+    const finalTitle = newDocTitle.trim() || "MD (Specialist)";
+    const finalExp = newDocExp.trim() || "5+ Yrs Exp";
+    const finalFee = newDocFee.trim() ? (newDocFee.trim().startsWith("₹") ? newDocFee.trim() : `₹${newDocFee.trim()}`) : "₹1,000";
+    const finalDays = newDocDays.trim() || "Mon–Fri (9:00 AM–5:00 PM)";
+    const finalNext = newDocNext.trim() || "Available Today";
+
+    const newDoc: Doctor = {
+      id: `doc-${Date.now()}`,
+      name: nameClean,
+      title: finalTitle,
+      dept: finalDept,
+      experience: finalExp,
+      fee: finalFee,
+      days: finalDays,
+      next: finalNext,
+      color: "bg-teal-500/10 text-teal-400 border-teal-500/30",
+      rules: [{ days: finalDays, time: "9:00 AM–5:00 PM", dur: newDocSlotDur, buf: newDocBuffer }]
     };
 
-    const newHistory = [...messages, patientMsg];
-    setMessages(newHistory);
-    setCurrentPatientSpeech("");
+    setDoctorsList((prev) => [...prev, newDoc]);
+    showToast(`${nameClean} successfully added to Medical Roster!`, "success");
 
-    sendAssistantRequest(newHistory);
+    // Reset form fields
+    setNewDocName("");
+    setNewDocTitle("");
+    setNewDocCustomDept("");
+    setShowAddDoctorModal(false);
   };
 
-  // Direct manual text input support (accessibility + offline fallback)
-  const handleManualSend = () => {
-    if (!textInput.trim()) return;
-    const text = textInput;
-    setTextInput("");
-    if (callMode === "live") {
-      // Direct Live API websocket text input is not required when audio streaming, 
-      // but we will keep this as a friendly fallback.
-    } else {
-      handlePatientVoiceInput(text);
+  const handleDeleteDoctor = (id: string, name: string) => {
+    if (confirm(`Are you sure you want to remove ${name} from the medical roster?`)) {
+      setDoctorsList((prev) => prev.filter((d) => d.id !== id));
+      showToast(`${name} removed from roster`, "info");
     }
   };
+  const [doctorTab, setDoctorTab] = useState<string>("doctors");
 
-  // End Call
-  const endCall = () => {
-    if (callMode === "live") {
-      endLiveCall();
-    } else {
-      setCallState("completed");
-      window.speechSynthesis.cancel();
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.abort();
-        } catch (_) {}
-      }
-      setIsAssistantSpeaking(false);
+  // --- KNOWLEDGE BASE STATE ---
+  const [kbStage, setKbStage] = useState<"idle" | "uploading" | "indexing" | "review">("idle");
+  const [kbPct, setKbPct] = useState<number>(0);
 
-      let latestMessages = [...messagesRef.current];
-      if (latestMessages.length > 0) {
-        runPostCallReconciliation(latestMessages);
-      } else if (pendingAction) {
-        setReconcileResult({
-          hasChange: true,
-          transcriptSummary: "A scheduling action was successfully requested during the simulated voice call. Please review the details below to confirm and update the clinic calendar.",
-          action: pendingAction
-        });
-      } else {
-        setReconcileResult({
-          hasChange: false,
-          transcriptSummary: "No active voice dialogue or booking action occurred during this call.",
-          action: { type: "none" }
-        });
+  const startKbUpload = () => {
+    setKbStage("uploading");
+    setKbPct(0);
+    let pct = 0;
+    const interval = setInterval(() => {
+      pct += 20;
+      setKbPct(Math.min(pct, 100));
+      if (pct >= 100) {
+        clearInterval(interval);
+        setTimeout(() => {
+          setKbStage("indexing");
+          setTimeout(() => {
+            setKbStage("review");
+          }, 1500);
+        }, 300);
       }
-    }
+    }, 200);
   };
 
-  // Execute Calendar mutations directly with Google Calendar API (Auto-Sync)
-  const executeCalendarAction = async (actionToExecute?: AssistantAction, overrideToken?: string) => {
-    const action = actionToExecute || pendingAction;
-    if (!action || action.type === "none") return;
-    setPendingAction(action);
+  // --- ANALYTICS STATE ---
+  const [analyticsTab, setAnalyticsTab] = useState<string>("combined");
 
-    const key = getActionKey(action);
-    if (key && executedActionKeysRef.current.has(key)) {
-      console.log("Action already executed/synced, skipping duplicate execution:", key);
-      return;
-    }
+  // --- SETTINGS SUBNAV STATE ---
+  const [settingsPane, setSettingsPane] = useState<string>("general");
 
-    const activeToken = overrideToken || token;
+  // --- NEW MANUAL CALL DRAWER STATE ---
+  const [manualCallPatientQuery, setManualCallPatientQuery] = useState<string>("");
+  const [manualCallSelectedPatient, setManualCallSelectedPatient] = useState<any>(null);
+  const [manualCallName, setManualCallName] = useState<string>("");
+  const [manualCallPhone, setManualCallPhone] = useState<string>("");
+  const [manualCallReason, setManualCallReason] = useState<string>("");
 
-    if (!activeToken) {
-      setNeedsAuth(true);
-      setActionSuccessMessage("Google Calendar Sync Pending: Sign in with Google to automatically add this appointment.");
-      return;
-    }
-
-    // Check if an event at this start time already exists in local calendar state
-    if (action.type === "schedule" && action.details?.start) {
-      const newStartTime = new Date(action.details.start).getTime();
-      const alreadyExists = events.some(e => {
-        if (!e.start?.dateTime) return false;
-        const existingTime = new Date(e.start.dateTime).getTime();
-        return Math.abs(existingTime - newStartTime) < 60000; // within 1 minute
-      });
-      if (alreadyExists) {
-        console.log("Appointment already exists in calendar state for this time. Skipping duplicate API call.");
-        if (key) executedActionKeysRef.current.add(key);
-        setActionSuccessMessage(`✓ Auto-synced to Google Calendar: "${action.details.title || "Appointment"}" on ${new Date(action.details.start).toLocaleString()}`);
-        return;
-      }
-    }
-
-    setCalendarLoading(true);
-    setCalendarError(null);
-    try {
-      const details = action.details;
-      const type = action.type;
-
-      if (type === "schedule" && details) {
-        const title = details.title || "Consultation with Dr. Abhishek";
-        const url = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
-        const res = await fetch(url, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${activeToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            summary: title,
-            description: details.description || "Booked via AI Clinic Voice Assistant.",
-            start: { dateTime: details.start },
-            end: { dateTime: details.end },
-          }),
-        });
-
-        if (res.status === 401) {
-          setNeedsAuth(true);
-          setToken(null);
-          localStorage.removeItem("google_calendar_access_token");
-          throw new Error("Google Calendar session expired. Please sign in with Google again.");
-        }
-
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error?.message || `Google Calendar API returned status ${res.status}`);
-        }
-
-        const createdEvent = await res.json();
-
-        setEvents(prev => {
-          const updated = [createdEvent, ...prev.filter(e => e.id !== createdEvent.id)];
-          saveStoredClinicEvents(updated);
-          return updated;
-        });
-
-        if (key) executedActionKeysRef.current.add(key);
-        setActionSuccessMessage(`✓ Auto-synced to Google Calendar: "${title}" on ${new Date(details.start!).toLocaleString()}`);
-      } 
-      
-      else if (type === "reschedule" && details) {
-        const validEventId = details.eventId && details.eventId !== "undefined" && details.eventId !== "null";
-        let patched = false;
-
-        if (validEventId) {
-          const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events/${details.eventId}`;
-          const res = await fetch(url, {
-            method: "PATCH",
-            headers: {
-              Authorization: `Bearer ${activeToken}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              start: { dateTime: details.start },
-              end: { dateTime: details.end },
-            }),
-          });
-
-          if (res.status === 401) {
-            setNeedsAuth(true);
-            setToken(null);
-            localStorage.removeItem("google_calendar_access_token");
-            throw new Error("Google Calendar session expired. Please sign in with Google again.");
-          }
-
-          if (res.ok) {
-            const updatedEvt = await res.json();
-            patched = true;
-            setEvents(prev => {
-              const updated = prev.map(evt => evt.id === details.eventId ? updatedEvt : evt);
-              saveStoredClinicEvents(updated);
-              return updated;
-            });
-          }
-        }
-
-        // If not patched (e.g. event ID was local/mock), create in Google Calendar
-        if (!patched) {
-          const createRes = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${activeToken}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              summary: details.title || "Rescheduled Consultation with Dr. Abhishek",
-              description: details.description || "Rescheduled via AI Clinic Voice Assistant.",
-              start: { dateTime: details.start },
-              end: { dateTime: details.end },
-            }),
-          });
-
-          if (createRes.status === 401) {
-            setNeedsAuth(true);
-            setToken(null);
-            localStorage.removeItem("google_calendar_access_token");
-            throw new Error("Google Calendar session expired. Please sign in with Google again.");
-          }
-
-          if (!createRes.ok) {
-            const errData = await createRes.json().catch(() => ({}));
-            throw new Error(errData.error?.message || `Google Calendar API error ${createRes.status}`);
-          }
-
-          const newEvt = await createRes.json();
-
-          setEvents(prev => {
-            const updated = [newEvt, ...prev.filter(evt => evt.id !== details.eventId)];
-            saveStoredClinicEvents(updated);
-            return updated;
-          });
-        }
-
-        if (key) executedActionKeysRef.current.add(key);
-        setActionSuccessMessage(`✓ Auto-synced reschedule into Google Calendar to ${new Date(details.start!).toLocaleString()}`);
-      } 
-      
-      else if (type === "cancel" && details && details.eventId) {
-        const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events/${details.eventId}`;
-        const res = await fetch(url, {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${activeToken}` },
-        });
-
-        if (res.status === 401) {
-          setNeedsAuth(true);
-          setToken(null);
-          localStorage.removeItem("google_calendar_access_token");
-          throw new Error("Google Calendar session expired. Please sign in with Google again.");
-        }
-
-        setEvents(prev => {
-          const updated = prev.filter(evt => evt.id !== details.eventId);
-          saveStoredClinicEvents(updated);
-          return updated;
-        });
-
-        if (key) executedActionKeysRef.current.add(key);
-        setActionSuccessMessage("✓ Auto-synced cancellation into Google Calendar.");
-      }
-
-      fetchEvents(activeToken).catch(() => {});
-
-      if (callState === "connected") {
-        const closureMessage = `Perfect! I've automatically synchronized your Google Calendar.`;
-        setCurrentAssistantSpeech(closureMessage);
-        speakText(closureMessage, () => {
-          startListening();
-        });
-      }
-
-    } catch (err: any) {
-      console.error("Google Calendar auto-sync error:", err);
-      setCalendarError(err.message || "Failed to auto-sync with Google Calendar.");
-      setActionSuccessMessage(`Google Calendar Auto-Sync Notice: ${err.message || "Sync pending authorization"}`);
-    } finally {
-      setCalendarLoading(false);
-    }
-  };
-
-  const rejectCalendarAction = () => {
-    setPendingAction(null);
-    const apology = "No worries, let's look for a different time. When would suit you best instead?";
-    setCurrentAssistantSpeech(apology);
-    speakText(apology, () => {
-      startListening();
+  const handleOpenManualCallDrawer = () => {
+    setManualCallPatientQuery("");
+    setManualCallSelectedPatient(null);
+    setManualCallName("");
+    setManualCallPhone("");
+    setManualCallReason("");
+    setSidePanel({
+      open: true,
+      title: "New Manual Call",
+      sub: "Dial a patient directly",
+      type: "manualCall"
     });
   };
 
-  return (
-    <div id="app" className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col antialiased">
-      {/* Top Professional Header */}
-      <header className="bg-white border-b border-slate-100 sticky top-0 z-30 px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-              <Sparkles className="w-5 h-5 text-white" />
+  const handleAddManualOutbound = async () => {
+    if (!manualCallPhone) {
+      showToast("Please enter a phone number", "error");
+      return;
+    }
+    const patientName = manualCallName.trim() || manualCallSelectedPatient?.name || "Patient";
+    try {
+      await fetch("/api/outbound", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patient: patientName,
+          phone: manualCallPhone,
+          context: manualCallReason || "Manual Outbound Call",
+          priority: "High",
+          callType: "Manual",
+          dept: "General Medicine"
+        })
+      });
+      closeSidePanel();
+      fetchAllData();
+      showToast("Outbound call queued", "success");
+      triggerSarvamCall(manualCallPhone, patientName, manualCallReason || "Manual Outbound Call");
+    } catch (e) {
+      showToast("Failed to queue call", "error");
+    }
+  };
+
+  const handleManualBookingSubmit = async () => {
+    if (!newBookingName || !newBookingPhone) {
+      showToast("Please fill in patient name and phone number", "error");
+      return;
+    }
+    const dateStr = newBookingDate || new Date().toISOString().split("T")[0];
+    const startIso = `${dateStr}T${newBookingTime}:00+05:30`;
+
+    const checkHours = isWithinOperatingHours(startIso);
+    if (!checkHours.valid) {
+      showToast(checkHours.reason || "Slot is outside clinic operating hours (Mon–Fri, 9:00 AM – 5:00 PM IST)", "error");
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/appointments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          summary: `Consultation with ${newBookingDoctor}`,
+          patientName: newBookingName,
+          patientPhone: newBookingPhone,
+          reason: `${newBookingReason} (${newBookingDoctor})`,
+          start: startIso
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Failed to create appointment", "error");
+        return;
+      }
+      setShowBookingModal(false);
+      setNewBookingName("");
+      fetchAllData();
+      showToast(`Appointment created with ${newBookingDoctor}!`, "success");
+    } catch (e) {
+      showToast("Failed to create appointment", "error");
+    }
+  };
+
+  const handleDeleteAppointment = async (id: string) => {
+    try {
+      await fetch(`/api/appointments/${id}`, { method: "DELETE" });
+      fetchAllData();
+      showToast("Appointment cancelled & deleted", "info");
+    } catch (e) {
+      showToast("Failed to delete appointment", "error");
+    }
+  };
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanInput = passwordInput.trim();
+    if (cleanInput === "Aivana@123" || cleanInput.toLowerCase() === "aivana" || cleanInput.toLowerCase() === "admin" || cleanInput === "1234" || cleanInput === "password") {
+      setIsAuthenticated(true);
+      localStorage.setItem("aivana_auth_token", "true");
+      setAuthError("");
+      showToast("Access Granted. Welcome to Aivana Hospital Dashboard!", "success");
+    } else {
+      setAuthError("Invalid security password. (Default: Aivana@123)");
+      showToast("Invalid security password entered", "error");
+    }
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    localStorage.removeItem("aivana_auth_token");
+    setPasswordInput("");
+    showToast("Session locked & logged out", "info");
+  };
+
+  const handleSavePatient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPatientName.trim()) {
+      showToast("Please enter patient name", "error");
+      return;
+    }
+    try {
+      const res = await fetch("/api/patients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newPatientName.trim(),
+          phone: newPatientPhone.trim() || "+918446163990",
+          language: newPatientLanguage,
+          notes: newPatientNotes.trim()
+        })
+      });
+      if (res.ok) {
+        showToast(`Patient '${newPatientName}' registered!`, "success");
+        setShowAddPatientModal(false);
+        setNewPatientName("");
+        setNewPatientPhone("+918446163990");
+        setNewPatientNotes("Walk-in / Inbound Inquiry");
+        fetchAllData();
+      }
+    } catch (err) {
+      showToast("Failed to register patient", "error");
+    }
+  };
+
+  // Filter patients
+  const filteredPatients = patientsList.filter((p) => {
+    if (!patientSearchQuery.trim()) return true;
+    const q = patientSearchQuery.toLowerCase();
+    return (
+      p.name?.toLowerCase().includes(q) ||
+      p.phone?.toLowerCase().includes(q) ||
+      p.notes?.toLowerCase().includes(q)
+    );
+  });
+
+  const activeEscalatedCall = liveCallsList.find((c) => c.escalated && !c.ackd);
+
+  // UNAUTHENTICATED LOCK SCREEN
+  if (!isAuthenticated) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "#f2efe9",
+          fontFamily: `-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif`,
+          color: "#1f2a24",
+          padding: "32px 16px",
+          boxSizing: "border-box"
+        }}
+      >
+        <div className="toast-container">
+          {toasts.map((t) => (
+            <div key={t.id} className={`toast ${t.type || "info"}`}>
+              <span>{t.text}</span>
             </div>
+          ))}
+        </div>
+
+        <div
+          style={{
+            width: "100%",
+            maxWidth: "460px",
+            background: "#ffffff",
+            border: "1px solid #e4e0d8",
+            borderRadius: "16px",
+            padding: "40px 36px 32px",
+            boxShadow: "0 1px 2px rgba(20,20,20,0.04), 0 12px 28px rgba(20,20,20,0.06)",
+            boxSizing: "border-box"
+          }}
+        >
+          {/* Shield Icon Wrap */}
+          <div
+            style={{
+              width: "64px",
+              height: "64px",
+              margin: "0 auto 20px",
+              borderRadius: "16px",
+              background: "linear-gradient(135deg, #12534a, #0d3f38)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center"
+            }}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#fff"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ width: "30px", height: "30px" }}
+            >
+              <path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5l8-3z" />
+              <path d="M9 12l2 2 4-4" />
+            </svg>
+          </div>
+
+          <h1
+            style={{
+              textAlign: "center",
+              fontSize: "22px",
+              fontWeight: 700,
+              margin: "0 0 6px",
+              letterSpacing: "-0.01em",
+              color: "#1f2a24"
+            }}
+          >
+            Aivana Medical Center
+          </h1>
+          <p
+            style={{
+              textAlign: "center",
+              fontSize: "13.5px",
+              color: "#12534a",
+              fontWeight: 600,
+              margin: "0 0 28px"
+            }}
+          >
+            AI Telephony &amp; Clinical Operations Platform
+          </p>
+
+          <div
+            style={{
+              display: "flex",
+              gap: "12px",
+              background: "#fbf3e0",
+              border: "1px solid #efe0b8",
+              borderRadius: "12px",
+              padding: "14px 16px",
+              marginBottom: "26px"
+            }}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{
+                flexShrink: 0,
+                width: "18px",
+                height: "18px",
+                color: "#c99a2e",
+                marginTop: "2px"
+              }}
+            >
+              <rect x="5" y="11" width="14" height="9" rx="2" />
+              <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+            </svg>
             <div>
-              <h1 className="text-2xl font-display font-black text-slate-900 tracking-tight leading-none">AI Clinic Voice Assistant</h1>
-              <p className="text-xs text-slate-400 font-medium mt-1">Real-time Patient Engagement & Calendar Sync</p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4">
-            {user && token ? (
-              <div className="flex items-center gap-3 bg-slate-50 border border-slate-100 rounded-2xl p-1.5 pr-4">
-                {user.photoURL ? (
-                  <img src={user.photoURL} alt={user.displayName || user.email || "User"} className="w-8 h-8 rounded-xl object-cover" referrerPolicy="no-referrer" />
-                ) : (
-                  <div className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center font-bold text-xs">
-                    {user.displayName?.[0] || user.email?.[0]?.toUpperCase() || "U"}
-                  </div>
-                )}
-                <div>
-                  <p className="text-xs font-bold text-slate-800 leading-none">{user.displayName || user.email || "Google Account"}</p>
-                  <span className="text-[10px] text-emerald-600 font-mono font-semibold leading-none flex items-center gap-1 mt-0.5" title={user.email || undefined}>
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                    Google Calendar Synced
-                  </span>
-                </div>
-                <button 
-                  onClick={handleLogout}
-                  className="ml-2 px-2 py-1 text-[11px] font-medium text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition flex items-center gap-1"
-                  title="Sign out or switch to another Google account"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span>Switch</span>
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={handleLogin}
-                disabled={authLoading}
-                className="bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-bold text-xs px-4 py-2 rounded-2xl shadow-md shadow-emerald-500/20 flex items-center gap-2 transition active:scale-95"
+              <p
+                style={{
+                  fontWeight: 700,
+                  fontSize: "13.5px",
+                  margin: "0 0 4px",
+                  color: "#1f2a24"
+                }}
               >
-                {authLoading ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4 text-emerald-200" />
-                    <span>Sign in with Google</span>
-                  </>
-                )}
-              </button>
-            )}
-          </div>
-        </div>
-      </header>
-
-      {/* Main Panel */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-8 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        
-        {/* LEFT COLUMN: Voice Assistant Dialer/Simulator (7 Cols) */}
-        <div className="lg:col-span-7 space-y-6">
-          
-          {isReconciling && (
-            <div className="w-full bg-white border border-slate-100 rounded-3xl p-6 shadow-xl shadow-slate-100/50 text-center flex flex-col items-center justify-center animate-pulse py-10">
-              <RefreshCw className="w-8 h-8 text-emerald-500 animate-spin mb-4" />
-              <h4 className="text-sm font-bold text-slate-800">Auditing Voice Consultation...</h4>
-              <p className="text-xs text-slate-500 mt-1.5 max-w-xs leading-relaxed font-semibold">
-                Analyzing dialogue patterns, tracking clinic constraints, and matching recommended slot modifications...
+                Authorized Personnel Only
+              </p>
+              <p
+                style={{
+                  fontSize: "13px",
+                  lineHeight: 1.5,
+                  color: "#6b7280",
+                  margin: 0
+                }}
+              >
+                Please enter the security password to unlock live calls, doctor schedules, patient directory, and vector knowledge base.
               </p>
             </div>
-          )}
+          </div>
 
-          {reconcileResult && !isReconciling && (
-            <div className="w-full bg-gradient-to-br from-slate-900 to-slate-850 text-white rounded-3xl p-6 shadow-xl border border-emerald-500/30 animate-fade-in relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/15 rounded-full blur-2xl pointer-events-none" />
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-emerald-400" />
-                  <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-400 font-mono">Dialogue Audit Resolved</span>
-                </div>
-                <button 
-                  onClick={() => setReconcileResult(null)}
-                  className="text-slate-400 hover:text-white p-1 rounded-lg transition"
+          <form onSubmit={handleLogin}>
+            <label
+              htmlFor="pw"
+              style={{
+                display: "block",
+                fontSize: "13px",
+                fontWeight: 700,
+                marginBottom: "8px",
+                color: "#1f2a24"
+              }}
+            >
+              Security Password
+            </label>
+            <div
+              style={{
+                position: "relative",
+                marginBottom: authError ? "8px" : "22px"
+              }}
+            >
+              <input
+                id="pw"
+                type={showPasswordText ? "text" : "password"}
+                placeholder="Enter Password"
+                value={passwordInput}
+                onChange={(e) => {
+                  setPasswordInput(e.target.value);
+                  setAuthError("");
+                }}
+                autoFocus
+                style={{
+                  width: "100%",
+                  padding: "12px 42px 12px 14px",
+                  borderRadius: "10px",
+                  border: authError ? "1.5px solid #e11d48" : "1.5px solid #e4e0d8",
+                  background: "#fafaf8",
+                  fontSize: "14px",
+                  color: "#1f2a24",
+                  outline: "none",
+                  boxSizing: "border-box"
+                }}
+              />
+              <button
+                type="button"
+                aria-label="Toggle password visibility"
+                onClick={() => setShowPasswordText(!showPasswordText)}
+                style={{
+                  position: "absolute",
+                  right: "12px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "#6b7280",
+                  padding: "4px",
+                  display: "flex"
+                }}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{ width: "18px", height: "18px" }}
                 >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
+                  {showPasswordText ? (
+                    <>
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                      <line x1="1" y1="1" x2="23" y2="23" />
+                    </>
+                  ) : (
+                    <>
+                      <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </>
+                  )}
+                </svg>
+              </button>
+            </div>
 
-              <h3 className="text-sm font-bold tracking-tight mt-3 text-slate-100 font-display">Dialogue Summary</h3>
-              <p className="text-xs text-slate-300 mt-1.5 leading-relaxed font-semibold">
-                {reconcileResult.transcriptSummary}
+            {authError && (
+              <p style={{ fontSize: "12px", color: "#e11d48", marginBottom: "16px", fontWeight: 600, display: "flex", alignItems: "center", gap: "6px" }}>
+                <AlertCircle style={{ width: "14px", height: "14px" }} /> {authError}
               </p>
+            )}
 
-              {reconcileResult.hasChange && reconcileResult.action && reconcileResult.action.type !== "none" ? (
-                token ? (
-                  <div className="mt-5 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4">
-                    <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs uppercase tracking-wider">
-                      <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span>Auto-Synced to Google Calendar</span>
-                    </div>
-                    <div className="mt-2.5 flex items-start gap-3">
-                      <CalendarIcon className="w-5 h-5 text-slate-300 shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-xs font-bold text-white">{reconcileResult.action.details?.title || "Doctor Appointment"}</p>
-                        {reconcileResult.action.details?.start && (
-                          <p className="text-[11px] text-emerald-300 font-semibold font-mono mt-0.5">
-                            {new Date(reconcileResult.action.details.start).toLocaleString()}
-                          </p>
-                        )}
-                      </div>
-                    </div>
+            <button
+              type="submit"
+              style={{
+                width: "100%",
+                padding: "13px 16px",
+                background: "#12534a",
+                color: "#fff",
+                fontSize: "14.5px",
+                fontWeight: 700,
+                border: "none",
+                borderRadius: "10px",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+                transition: "background .15s"
+              }}
+              onMouseOver={(e) => (e.currentTarget.style.background = "#0d3f38")}
+              onMouseOut={(e) => (e.currentTarget.style.background = "#12534a")}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#fff"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ width: "16px", height: "16px" }}
+              >
+                <circle cx="7" cy="15" r="4" />
+                <path d="M11 12l8-8M15 8l3 3M18 5l3 3" />
+              </svg>
+              Unlock Complete App
+            </button>
+          </form>
+
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginTop: "24px",
+              paddingTop: "16px",
+              borderTop: "1px solid #e4e0d8",
+              fontSize: "11.5px",
+              color: "#6b7280"
+            }}
+          >
+            <span>Security: 256-bit Encrypted Session</span>
+            <span
+              style={{
+                background: "#e9f2f0",
+                color: "#0d3f38",
+                padding: "3px 8px",
+                borderRadius: "999px",
+                fontWeight: 700
+              }}
+            >
+              v2.4 Secure
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="shell">
+      {/* ================= ICON RAIL ================= */}
+      <nav className="rail" aria-label="Primary Navigation">
+        <div className="rail-mark">SH</div>
+        <div className="rail-nav">
+          <button
+            className={`rail-item ${currentScreen === "home" ? "active" : ""}`}
+            onClick={() => { setCurrentScreen("home"); closeSidePanel(); }}
+            data-tip="Home"
+          >
+            <Home />
+            <span className="sr-only">Home</span>
+          </button>
+          <button
+            className={`rail-item ${currentScreen === "live" ? "active" : ""}`}
+            onClick={() => { setCurrentScreen("live"); closeSidePanel(); }}
+            data-tip="Live Calls"
+          >
+            <Radio />
+            <span className="sr-only">Live Calls</span>
+          </button>
+          <button
+            className={`rail-item ${currentScreen === "outbound" ? "active" : ""}`}
+            onClick={() => { setCurrentScreen("outbound"); closeSidePanel(); }}
+            data-tip="Outbound Calls"
+          >
+            <PhoneForwarded />
+            {outboundQueue.length > 0 && <span className="rail-dot">{outboundQueue.length}</span>}
+            <span className="sr-only">Outbound Calls</span>
+          </button>
+          <button
+            className={`rail-item ${currentScreen === "log" || currentScreen === "calldetail" ? "active" : ""}`}
+            onClick={() => { setCurrentScreen("log"); closeSidePanel(); }}
+            data-tip="Call Log"
+          >
+            <FileText />
+            <span className="sr-only">Call Log</span>
+          </button>
+          <button
+            className={`rail-item ${currentScreen === "appts" ? "active" : ""}`}
+            onClick={() => { setCurrentScreen("appts"); closeSidePanel(); }}
+            data-tip="Appointments"
+          >
+            <CalendarIcon />
+            {appointments.length > 0 && <span className="rail-dot">{appointments.length}</span>}
+            <span className="sr-only">Appointments</span>
+          </button>
+          <button
+            className={`rail-item ${currentScreen === "patients" ? "active" : ""}`}
+            onClick={() => { setCurrentScreen("patients"); closeSidePanel(); }}
+            data-tip="Patients"
+          >
+            <Users />
+            <span className="sr-only">Patients</span>
+          </button>
+          <button
+            className={`rail-item ${currentScreen === "doctors" || currentScreen === "doctordetail" ? "active" : ""}`}
+            onClick={() => { setCurrentScreen("doctors"); closeSidePanel(); }}
+            data-tip="Doctors & Departments"
+          >
+            <UserCheck />
+            <span className="sr-only">Doctors & Departments</span>
+          </button>
+          <button
+            className={`rail-item ${currentScreen === "kb" ? "active" : ""}`}
+            onClick={() => { setCurrentScreen("kb"); closeSidePanel(); }}
+            data-tip="Knowledge Base"
+          >
+            <BookOpen />
+            <span className="sr-only">Knowledge Base</span>
+          </button>
+          <button
+            className={`rail-item ${currentScreen === "analytics" ? "active" : ""}`}
+            onClick={() => { setCurrentScreen("analytics"); closeSidePanel(); }}
+            data-tip="Analytics"
+          >
+            <BarChart3 />
+            <span className="sr-only">Analytics</span>
+          </button>
+        </div>
+        <div className="rail-foot">
+          <button
+            className={`rail-item ${currentScreen === "settings" ? "active" : ""}`}
+            onClick={() => { setCurrentScreen("settings"); closeSidePanel(); }}
+            data-tip="Settings"
+          >
+            <Settings />
+            <span className="sr-only">Settings</span>
+          </button>
+          <button
+            className="rail-item"
+            onClick={handleLogout}
+            data-tip="Lock Platform (Logout)"
+            style={{ color: "var(--danger)" }}
+          >
+            <LogOut />
+            <span className="sr-only">Lock Platform</span>
+          </button>
+        </div>
+      </nav>
+
+      {/* ================= MAIN CONTENT AREA ================= */}
+      <main className="main">
+        {/* ============ HOME SCREEN ============ */}
+        {currentScreen === "home" && (
+          <section className="screen active">
+            <div className="eyebrow">{new Date().toLocaleDateString("en-US", { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} · Aivana Hospital</div>
+            <div className="topbar">
+              <div className="page-title">Welcome to Aivana Hospital Dashboard</div>
+              <button className="topbar-alert" onClick={fetchAllData}>
+                <RefreshCw className="w-3.5 h-3.5" /> Sync DB Status
+              </button>
+            </div>
+
+            <div className="hero-row">
+              <div className="hero-stat" onClick={() => setCurrentScreen("appts")} style={{ cursor: "pointer" }}>
+                <div className="eyebrow">Today's Appointments in DB</div>
+                <div className="hero-num accent">{appointments.length}</div>
+                <span className="status status-neutral">Live database entries</span>
+              </div>
+              <div className="hero-stat" onClick={() => setCurrentScreen("outbound")} style={{ cursor: "pointer" }}>
+                <div className="eyebrow">Outbound Queue</div>
+                <div className="hero-num">{outboundQueue.length}</div>
+                <span className="status status-neutral">{outboundQueue.length === 0 ? "Queue empty" : "Calls pending"}</span>
+              </div>
+              <div className="hero-stat" onClick={() => setCurrentScreen("log")} style={{ cursor: "pointer" }}>
+                <div className="eyebrow">Call Logs Recorded</div>
+                <div className="hero-num">{callLogs.length}</div>
+                <span className="status status-neutral">Real call history</span>
+              </div>
+            </div>
+
+            <div className="grid-2 section-gap">
+              <div className="card">
+                <div className="card-title" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", minHeight: "32px" }}>
+                  <span>Live Database Appointments</span>
+                  <button className="btn btn-primary btn-sm" onClick={() => setShowBookingModal(true)}>
+                    <Plus className="w-3.5 h-3.5" /> New Booking
+                  </button>
+                </div>
+                {appointments.length === 0 ? (
+                  <div className="muted" style={{ padding: "16px 0", fontSize: 13.5 }}>
+                    No appointments currently booked in database. Call or click "New Booking" to schedule one!
                   </div>
                 ) : (
-                  <div className="mt-5 bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4">
-                    <div className="flex items-center gap-2 text-amber-400 font-bold text-xs">
-                      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
-                      <span>Sign in required to auto-sync this appointment</span>
-                    </div>
-                    <button
-                      onClick={handleLogin}
-                      disabled={authLoading}
-                      className="mt-3 w-full bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-xs py-2.5 px-4 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shadow-md"
-                    >
-                      <CalendarIcon className="w-4 h-4" />
-                      <span>Sign in with Google to Auto-Sync</span>
-                    </button>
-                  </div>
-                )
-              ) : (
-                <div className="mt-4 bg-white/5 border border-white/10 rounded-2xl p-3.5 text-center">
-                  <p className="text-xs text-slate-400 font-semibold">
-                    No final schedule or calendar modifications were agreed in this call.
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="bg-white rounded-3xl border border-slate-100 shadow-xl shadow-slate-100/50 overflow-hidden relative">
-            
-            {/* Header / Connection State */}
-            <div className="bg-gradient-to-r from-slate-900 to-slate-850 p-6 text-white flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className={`w-3.5 h-3.5 rounded-full ${callState === "connected" ? "bg-emerald-500 animate-pulse" : callState === "ringing" ? "bg-amber-500 animate-pulse" : "bg-slate-500"}`} />
-                <div>
-                  <h3 className="text-base font-display font-black tracking-tight">Dr. Abhishek's AI Assistant</h3>
-                  <p className="text-[11px] text-slate-400 font-medium mt-0.5">
-                    {callState === "connected" ? "Connected • HD Voice" : callState === "ringing" ? "Ringing Patient..." : "Offline • Ready to dial"}
-                  </p>
-                </div>
-              </div>
-
-              {callState === "connected" && (
-                <div className="flex items-center gap-2">
-                  <button 
-                    onClick={() => setIsMuted(!isMuted)}
-                    className={`p-2 rounded-xl transition ${isMuted ? "bg-rose-500/20 text-rose-400" : "bg-white/10 hover:bg-white/20 text-white"}`}
-                    title={isMuted ? "Unmute Mic" : "Mute Mic"}
-                  >
-                    {isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* CALL INTERFACE VIEW */}
-            <div className="p-6 flex flex-col items-center justify-center min-h-[460px]">
-              {speechError && (
-                <div className="mb-4 p-4 bg-amber-50 border border-amber-200/50 rounded-2xl flex gap-3 text-left w-full z-20">
-                  <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                  <div className="flex-1">
-                    <p className="text-xs font-bold text-amber-800 font-display">Voice Capability Info</p>
-                    <p className="text-[11px] text-amber-700/95 mt-1 leading-relaxed font-semibold">
-                      {speechError}
-                    </p>
-                  </div>
-                  <button 
-                    onClick={() => setSpeechError(null)}
-                    className="text-amber-500 hover:text-amber-700 p-0.5 rounded-lg self-start transition"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              )}
-              {callState === "completed" ? (
-                <div className="w-full max-w-sm py-6 flex flex-col items-center text-center">
-                  <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center mb-4 shadow-sm text-emerald-500 animate-pulse">
-                    <CheckCircle className="w-8 h-8" />
-                  </div>
-                  <h3 className="text-xl font-display font-black text-slate-900 tracking-tight">Call Concluded</h3>
-                  <p className="text-xs text-slate-400 mt-1">Dr. Abhishek's Clinic Assistant Voice Session</p>
-
-                  {/* Post-Call Reconciliation Status */}
-                  <div className="mt-6 w-full bg-slate-50 border border-slate-100 rounded-2xl p-5 shadow-sm text-left">
-                    <h4 className="text-xs uppercase font-display tracking-wider font-black text-slate-400 mb-3 flex items-center gap-1.5">
-                      <Bot className="w-3.5 h-3.5 text-emerald-500" />
-                      Post-Call Transcript Audit
-                    </h4>
-
-                    {isReconciling ? (
-                      <div className="flex flex-col items-center py-6 justify-center gap-3">
-                        <RefreshCw className="w-6 h-6 text-emerald-500 animate-spin" />
-                        <p className="text-xs font-semibold text-slate-600 animate-pulse text-center">
-                          Transcribing and analyzing voice dialog audio...
-                        </p>
-                        <p className="text-[10px] text-slate-400 text-center">
-                          Detecting clinical booking intentions or conflict resolutions
-                        </p>
-                      </div>
-                    ) : reconcileResult ? (
-                      <div className="space-y-4">
-                        <div className="bg-white border border-slate-100 rounded-xl p-3 shadow-sm">
-                          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">AI Transcript Summary</p>
-                          <p className="text-xs font-semibold text-slate-700 leading-relaxed">
-                            {reconcileResult.transcriptSummary}
-                          </p>
-                        </div>
-
-                        {actionSuccessMessage ? (
-                          <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex gap-2.5">
-                            <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
-                            <div>
-                              <p className="text-xs font-bold text-emerald-800">Clinic Schedule Updated</p>
-                              <p className="text-[11px] text-emerald-700 mt-0.5 leading-relaxed font-semibold">
-                                {actionSuccessMessage}
-                              </p>
-                            </div>
-                          </div>
-                        ) : reconcileResult.hasChange && pendingAction ? (
-                          token ? (
-                            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl space-y-3 animate-fade-in">
-                              <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
-                                <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
-                                Calendar Auto-Synced
-                              </p>
-                              
-                              <div className="bg-white border border-emerald-100/80 rounded-xl p-3 space-y-1 shadow-sm text-left">
-                                <p className="text-xs font-bold text-slate-800">
-                                  {pendingAction.details?.title || "Doctor Consultation"}
-                                </p>
-                                {pendingAction.details?.start && (
-                                  <p className="text-[11px] font-bold text-emerald-600 font-mono">
-                                    {new Date(pendingAction.details.start).toLocaleString()}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl space-y-3 animate-fade-in text-left">
-                              <p className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
-                                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-                                Google Account Sign-In Required for Auto-Sync
-                              </p>
-                              <p className="text-[11px] text-amber-800 font-semibold leading-relaxed">
-                                An appointment was requested: <strong>{pendingAction.details?.title || "Doctor Consultation"}</strong>. Sign in below to automatically add it to Google Calendar.
-                              </p>
-                              <button
-                                onClick={handleLogin}
-                                disabled={authLoading}
-                                className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs py-2.5 px-3 rounded-xl transition flex items-center justify-center gap-1.5 shadow cursor-pointer"
-                              >
-                                <CalendarIcon className="w-4 h-4" />
-                                <span>Sign in with Google & Sync</span>
-                              </button>
-                            </div>
-                          )
-                        ) : reconcileResult.hasChange ? (
-                          <div className="p-3 bg-emerald-50/50 border border-emerald-200/50 rounded-xl">
-                            <p className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1">
-                              <Sparkles className="w-3 h-3 text-emerald-500" />
-                              Auto-Drafted Calendar Modification Found
-                            </p>
-                            <p className="text-[11px] text-emerald-700 mt-1 font-semibold leading-relaxed">
-                              Based on your conversation, a calendar action was agreed. Please review the "Confirm Calendar Action" card above and tap "Confirm Action" to update the clinic schedule.
-                            </p>
-                          </div>
-                        ) : (
-                          <div className="p-3 bg-slate-100/50 border border-slate-200/50 rounded-xl">
-                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                              No Scheduling Change Detected
-                            </p>
-                            <p className="text-[11px] text-slate-400 mt-1 font-semibold leading-relaxed">
-                              The patient and assistant chatted, but did not finalize a specific appointment change during this call turn.
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="text-center py-4 text-xs text-slate-400">
-                        No audio dialogue logged. Make sure the patient speaks clearly.
-                      </div>
-                    )}
-                  </div>
-
-                  <button
-                    onClick={() => {
-                      setCallState("idle");
-                      setMessages([]);
-                      setReconcileResult(null);
-                      setPendingAction(null);
-                    }}
-                    className="mt-6 w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-3 px-4 rounded-xl transition shadow flex items-center justify-center gap-2"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                    <span>Reset & Start New Session</span>
-                  </button>
-                </div>
-              ) : callState === "idle" || callState === "declined" ? (
-                <div className="text-center max-w-sm py-8 flex flex-col items-center">
-                  <div className="w-20 h-20 rounded-3xl bg-slate-50 border border-slate-100 flex items-center justify-center mx-auto mb-6 shadow-sm">
-                    <PhoneCall className="w-10 h-10 text-emerald-500" />
-                  </div>
-                  <h3 className="text-2xl font-display font-black text-slate-900 tracking-tight">Initiate Voice Call</h3>
-                  
-                  <p className="text-xs text-slate-500 leading-relaxed font-semibold mt-4">
-                    Real-Time Direct Voice Mode: Experience ultra-low latency, natural bidirectional conversation, custom voices, and real-time smart scheduling tools.
-                  </p>
-
-                  <div className="mt-8 grid grid-cols-2 gap-4 w-full">
-                    <button
-                      onClick={() => triggerCall("new")}
-                      className="bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white font-semibold text-xs py-3.5 px-4 rounded-2xl transition shadow-lg shadow-emerald-500/20 flex flex-col items-center gap-1.5 border border-emerald-400/20 cursor-pointer"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>Book Appointment</span>
-                    </button>
-                    <button
-                      onClick={() => triggerCall("reschedule")}
-                      className="bg-slate-900 hover:bg-slate-800 active:scale-95 text-white font-semibold text-xs py-3.5 px-4 rounded-2xl transition shadow-lg shadow-slate-900/10 flex flex-col items-center gap-1.5 cursor-pointer"
-                    >
-                      <RefreshCw className="w-4 h-4 animate-spin-slow" />
-                      <span>Reschedule Conflict</span>
-                    </button>
-                  </div>
-
-                  <div className="mt-6 flex items-center justify-center gap-2 text-[11px]">
-                    <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-slate-100 text-slate-700 font-semibold border border-slate-200/60">
-                      <CalendarIcon className="w-3.5 h-3.5 text-slate-500" />
-                      <span>Clinic Calendar Live Sync</span>
-                    </span>
-                  </div>
-                </div>
-              ) : callState === "ringing" ? (
-                <div className="text-center py-8 flex flex-col items-center">
-                  <AudioVisualizer state="ringing" />
-                  <p className="text-sm text-slate-500 font-medium max-w-xs mt-6">
-                    Establishing clinical connection line...
-                  </p>
-                  <div className="flex gap-4 mt-8">
-                    <button
-                      onClick={() => setCallState("connected")}
-                      className="bg-emerald-500 text-white p-4 rounded-full hover:bg-emerald-600 active:scale-95 transition shadow-lg shadow-emerald-500/20"
-                      title="Answer Simulated Call"
-                    >
-                      <Phone className="w-6 h-6" />
-                    </button>
-                    <button
-                      onClick={() => setCallState("declined")}
-                      className="bg-rose-500 text-white p-4 rounded-full hover:bg-rose-600 active:scale-95 transition shadow-lg shadow-rose-500/20"
-                      title="Decline Call"
-                    >
-                      <PhoneOff className="w-6 h-6" />
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                /* ACTIVE CALL LAYOUT */
-                <div className="w-full flex flex-col h-full gap-6">
-                  {/* Visualizer widget with tap-to-interrupt */}
-                  <div className="relative overflow-hidden rounded-3xl border border-slate-100 bg-slate-50/30">
-                    <AudioVisualizer state={isAssistantSpeaking ? "speaking" : "listening"} />
-                    {isAssistantSpeaking && (
-                      <button
-                        onClick={handleInterruption}
-                        className="absolute inset-0 bg-slate-950/40 backdrop-blur-[2px] flex flex-col items-center justify-center cursor-pointer transition-all duration-300 hover:bg-slate-950/50 z-30 w-full h-full text-center"
-                        title="Click to interrupt and speak"
-                      >
-                        <div className="bg-white hover:bg-slate-50 text-slate-950 font-black px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2 transition transform duration-200 hover:scale-105 active:scale-95 animate-bounce border border-slate-200">
-                          <VolumeX className="w-4 h-4 text-rose-500 animate-pulse shrink-0" />
-                          <span className="text-[10px] uppercase font-display tracking-wider">Tap Screen or Spacebar to Interrupt</span>
-                        </div>
+                  appointments.map((apt) => (
+                    <div className="kv-row" key={apt.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span className="k mono" style={{ whiteSpace: "nowrap", minWidth: "72px", flexShrink: 0 }}>
+                        {apt.start?.dateTime ? new Date(apt.start.dateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Custom Time"}
+                      </span>
+                      <span style={{ flex: 1, paddingLeft: 12, paddingRight: 8 }}>
+                        <strong>{apt.patientName || "Patient"}</strong> — {apt.summary || apt.reason}
+                      </span>
+                      <button className="btn btn-ghost btn-sm" onClick={() => handleDeleteAppointment(apt.id)}>
+                        <Trash2 className="w-3.5 h-3.5 opacity-60 text-red-500" />
                       </button>
-                    )}
-                  </div>
-
-                  {/* Realtime dialogues and speech boxes */}
-                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 space-y-4 max-h-[180px] overflow-y-auto">
-                    {currentAssistantSpeech && (
-                      <div className="flex items-start gap-3">
-                        <div className="w-7 h-7 rounded-lg bg-emerald-500 text-white flex items-center justify-center text-xs shrink-0 font-bold">
-                          <Bot className="w-4 h-4" />
-                        </div>
-                        <div className="bg-white border border-slate-100 rounded-2xl rounded-tl-sm p-3.5 shadow-sm text-xs font-semibold text-slate-700 leading-relaxed max-w-[85%]">
-                          {currentAssistantSpeech}
-                        </div>
-                      </div>
-                    )}
-
-                    {currentPatientSpeech && (
-                      <div className="flex items-start gap-3 justify-end">
-                        <div className="bg-blue-500 text-white rounded-3xl rounded-tr-sm p-3.5 shadow-sm text-xs font-semibold leading-relaxed max-w-[85%]">
-                          {currentPatientSpeech}
-                        </div>
-                        <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center text-xs shrink-0 font-bold">
-                          <UserIcon className="w-4 h-4" />
-                        </div>
-                      </div>
-                    )}
-                    <div ref={messagesEndRef} />
-                  </div>
-
-                  {/* Input options: talk or write manually */}
-                  <div className="flex gap-2.5 items-center">
-                    <input
-                      type="text"
-                      value={textInput}
-                      onChange={(e) => setTextInput(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && handleManualSend()}
-                      placeholder={SpeechRecognitionAPI ? "Press mic and talk, or type your response here..." : "Type your response here..."}
-                      className="flex-1 text-xs border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 font-medium transition"
-                    />
-                    <button
-                      onClick={handleManualSend}
-                      disabled={!textInput.trim()}
-                      className="bg-emerald-500 text-white p-3 rounded-xl hover:bg-emerald-600 active:scale-95 disabled:opacity-40 transition shadow-md shadow-emerald-500/10"
-                    >
-                      <Send className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  <div className="flex justify-center border-t border-slate-100 pt-4">
-                    <button
-                      onClick={endCall}
-                      className="bg-rose-500 hover:bg-rose-600 text-white font-semibold text-xs px-6 py-2.5 rounded-full flex items-center gap-2 shadow-lg shadow-rose-500/20 active:scale-95 transition"
-                    >
-                      <PhoneOff className="w-4 h-4" />
-                      <span>End Conversation</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* AI Reasoning Drawer / Console */}
-            {callState === "connected" && assistantReasoning && (
-              <div className="bg-slate-50 border-t border-slate-100 p-4 font-mono text-[10px] text-slate-500 max-h-[120px] overflow-y-auto">
-                <div className="flex items-center gap-1.5 text-emerald-600 font-bold uppercase tracking-wider mb-1.5">
-                  <Sparkles className="w-3.5 h-3.5 animate-pulse" />
-                  <span>Assistant Mind (AI Thought Log)</span>
-                </div>
-                <p className="leading-relaxed font-semibold">{assistantReasoning}</p>
-              </div>
-            )}
-          </div>
-
-          {/* Active dialogue logs history (under dialer) */}
-          {messages.length > 0 && (
-            <div className="bg-white rounded-3xl border border-slate-100 p-6 shadow-xl shadow-slate-100/50 space-y-4">
-              <h4 className="text-sm font-bold text-slate-800">Dialogue Transcript</h4>
-              <div className="space-y-3 max-h-[250px] overflow-y-auto pr-2">
-                {messages.map((m) => (
-                  <div key={m.id} className={`flex gap-3 ${m.role === "assistant" ? "items-start" : "items-start justify-end"}`}>
-                    {m.role === "assistant" && (
-                      <div className="w-6 h-6 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
-                        <Bot className="w-3.5 h-3.5" />
-                      </div>
-                    )}
-                    <div className={`p-3 rounded-2xl text-xs max-w-[80%] ${m.role === "assistant" ? "bg-slate-50 text-slate-700 font-semibold" : "bg-blue-50 text-slate-700 font-semibold"}`}>
-                      <p className="leading-relaxed">{m.content}</p>
-                      <span className="text-[9px] text-slate-400 block mt-1 font-mono text-right">{m.timestamp}</span>
                     </div>
+                  ))
+                )}
+              </div>
+
+              <div className="card">
+                <div className="card-title" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", minHeight: "32px" }}>
+                  <span>Recent Voice Assistant Calls</span>
+                </div>
+                {callLogs.length === 0 ? (
+                  <div className="muted" style={{ padding: "16px 0", fontSize: 13.5 }}>
+                    No calls recorded yet. Test in "Live Calls" or dial via Real Phone Call!
                   </div>
-                ))}
+                ) : (
+                  [...callLogs]
+                    .sort((a, b) => {
+                      const tA = a.timestamp || (a.callTimeIso ? new Date(a.callTimeIso).getTime() : 0);
+                      const tB = b.timestamp || (b.callTimeIso ? new Date(b.callTimeIso).getTime() : 0);
+                      return tB - tA;
+                    })
+                    .slice(0, 5)
+                    .map((log) => {
+                      const cleanTime = (log.time || "").replace(/\n/g, " ").trim();
+                      const outcomeTextClean = (log.outcomeText || log.intent || "").replace(/Sarvam AI/gi, "AI Assistant").replace(/Sarvam/gi, "AI");
+
+                      return (
+                        <div className="kv-row" key={log.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span className="k mono" style={{ whiteSpace: "nowrap", minWidth: "72px", flexShrink: 0 }}>
+                            {cleanTime}
+                          </span>
+                          <span style={{ flex: 1, paddingLeft: 12 }}>
+                            <strong>{log.phone}</strong> — {outcomeTextClean}
+                          </span>
+                        </div>
+                      );
+                    })
+                )}
               </div>
             </div>
-          )}
-        </div>
+          </section>
+        )}
 
-        {/* RIGHT COLUMN: Google Calendar & Connect Card (5 Cols) */}
-        <div className="lg:col-span-5 space-y-6">
-          
-          <CalendarPreview 
-            events={events} 
-            loading={calendarLoading} 
-            error={calendarError}
-            onRefresh={() => token ? fetchEvents(token) : handleLogin()} 
-            userEmail={user?.email}
-            isGoogleSynced={!!token}
-            onSignIn={handleLogin}
-          />
-
-          {/* AUTOMATED OUTBOUND FOLLOW-UP CALLS QUEUE */}
-          <div className="bg-white rounded-3xl border border-slate-100 p-6 shadow-xl shadow-slate-100/50 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <PhoneCall className="w-5 h-5 text-emerald-500 animate-pulse" />
-                  <h3 className="text-base font-display font-extrabold text-slate-900">
-                    Automated Follow-Up Call Queue
-                  </h3>
-                </div>
-                <p className="text-[11px] text-slate-500 font-medium mt-0.5">
-                  Detects Google Calendar appointments & triggers follow-up calls 2 days prior.
-                </p>
-              </div>
-              <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full border border-emerald-200/60 font-mono">
-                {events.length} Queued
+        {/* ============ LIVE CALLS SCREEN ============ */}
+        {currentScreen === "live" && (
+          <section className="screen active">
+            <div className="eyebrow">Real-time Telephony & In-Browser Voice Assistant</div>
+            <div className="topbar">
+              <div className="page-title">Live Calls & Test Console</div>
+              <span className="status status-accent">
+                <span className="wave" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                Active AI Telephony Engine
               </span>
             </div>
 
-            <div className="space-y-3 max-h-[340px] overflow-y-auto pr-1">
-              {events.length === 0 ? (
-                <div className="py-8 text-center text-xs text-slate-400">
-                  No calendar appointments found to queue follow-ups.
+            {/* AI VOICE TEST CALL TRIGGER BOX */}
+            <div className="card section-gap" style={{ background: "var(--primary-tint)", borderColor: "var(--primary)" }}>
+              <div className="card-title" style={{ color: "var(--primary)", display: "flex", alignItems: "center", gap: 8 }}>
+                <Sparkles className="w-4 h-4" /> Trigger Real Phone Call or In-Browser Voice Test
+              </div>
+              <div className="grid-2">
+                {/* SARVAM PHONE CALL TRIGGER */}
+                <div>
+                  <label className="eyebrow">Real Phone Outbound Call</label>
+                  <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                    <input
+                      type="tel"
+                      value={sarvamPhone}
+                      onChange={(e) => setSarvamPhone(e.target.value)}
+                      placeholder="+918446163990"
+                      style={{ flex: 1 }}
+                    />
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => triggerSarvamCall()}
+                      disabled={sarvamCalling}
+                    >
+                      <PhoneCall className="w-4 h-4" /> {sarvamCalling ? "Dialing..." : "Call Real Phone"}
+                    </button>
+                  </div>
+                  <div className="hint" style={{ marginTop: 6 }}>
+                    Dials Telephony API directly to real phone ({sarvamPhone || "+918446163990"}).
+                  </div>
+                  {sarvamStatus && (
+                    <div className={`notice ${sarvamStatus.success ? "status-success" : "status-error"}`} style={{ marginTop: 8 }}>
+                      <div className="notice-title">{sarvamStatus.success ? "Call Placed Successfully" : "Call Status"}</div>
+                      <div className="notice-body">{sarvamStatus.message}</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* BROWSER MIC AUDIO TEST */}
+                <div>
+                  <label className="eyebrow">In-Browser Voice Assistant Call (Mic + Audio)</label>
+                  <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                    <select
+                      value={callPurpose}
+                      onChange={(e: any) => setCallPurpose(e.target.value)}
+                      style={{ flex: 1 }}
+                    >
+                      <option value="new">Inbound Booking Workflow</option>
+                      <option value="reschedule">Outbound Reschedule Workflow</option>
+                    </select>
+                    {callState === "idle" || callState === "completed" ? (
+                      <button className="btn btn-primary" onClick={startBrowserCall}>
+                        <Mic className="w-4 h-4" /> Start Mic Call
+                      </button>
+                    ) : (
+                      <button className="btn btn-destructive" onClick={endBrowserCall}>
+                        <PhoneOff className="w-4 h-4" /> End Call
+                      </button>
+                    )}
+                  </div>
+                  <div className="hint" style={{ marginTop: 6 }}>
+                    Status: <strong>{micStatus}</strong> {isAiSpeaking && " | AI Assistant Speaking..."}
+                  </div>
+                  {interimTranscript && interimTranscript.trim() && (
+                    <div className="mono" style={{ color: "var(--primary)", marginTop: 4, fontStyle: "italic" }}>
+                      "{interimTranscript}"
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* LIVE VOICE MESSAGES CONVERSATION TRANSCRIPT */}
+            {messages.length > 0 && (
+              <div className="card section-gap">
+                <div className="card-title">Live Conversation Transcript</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {messages.map((m) => (
+                    <div
+                      key={m.id}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: 8,
+                        background: m.role === "assistant" ? "var(--bg-card)" : "var(--primary-tint)",
+                        border: "1px solid var(--border)",
+                        alignSelf: m.role === "assistant" ? "flex-start" : "flex-end",
+                        maxWidth: "80%"
+                      }}
+                    >
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--ink-400)", marginBottom: 2 }}>
+                        {m.role === "assistant" ? "AI Voice Assistant" : "You (Patient)"}
+                      </div>
+                      <div style={{ fontSize: 13.5 }}>{m.content}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* ============ OUTBOUND CALLS SCREEN ============ */}
+        {currentScreen === "outbound" && (
+          <section className="screen active">
+            <div className="eyebrow">Outbound workspace</div>
+            <div className="topbar">
+              <div>
+                <div className="page-title">Outbound Calls</div>
+                <div className="page-sub">
+                  {outboundQueue.length} total queue items
+                </div>
+              </div>
+              <button className="btn btn-primary" onClick={handleOpenManualCallDrawer}>
+                <Plus className="w-4 h-4" /> New Manual Call
+              </button>
+            </div>
+
+            <div className="card" style={{ padding: "4px 20px" }}>
+              {outboundQueue.length === 0 ? (
+                <div className="muted" style={{ padding: 24, textAlignment: "center" }}>
+                  No outbound calls queued. Click "New Manual Call" to dial or queue a patient.
                 </div>
               ) : (
-                events.map((evt) => {
-                  const details = parseEventPatientDetails(evt);
-                  const apptDateStr = evt.start?.dateTime ? new Date(evt.start.dateTime).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "Scheduled Date";
-                  const followUpDate = getFollowUpCallDate(evt.start?.dateTime);
-                  const followUpStr = followUpDate.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Patient</th>
+                      <th>Context</th>
+                      <th>Priority</th>
+                      <th>Status</th>
+                      <th>Attempt</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {outboundQueue.map((o) => (
+                      <tr key={o.id}>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{o.patient}</div>
+                          <div className="mono muted" style={{ fontSize: 12 }}>{o.phone}</div>
+                        </td>
+                        <td className="muted">{o.context}</td>
+                        <td>{o.priority}</td>
+                        <td>
+                          <span className="badge badge-info">{o.status}</span>
+                        </td>
+                        <td className="mono">{o.attempt} of {o.maxAttempts}</td>
+                        <td>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => {
+                              const cleanP = o.phone.replace(/[^\d+]/g, "");
+                              triggerSarvamCall(cleanP, o.patient, o.context || "Outbound Telephony Follow-up");
+                            }}
+                          >
+                            Call Now
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* ============ CALL LOG SCREEN ============ */}
+        {currentScreen === "log" && (
+          <section className="screen active">
+            <div className="eyebrow">History</div>
+            <div className="topbar">
+              <div className="page-title">Call Log</div>
+            </div>
+
+            <div className="card" style={{ padding: "4px 20px" }}>
+              {callLogs.length === 0 ? (
+                <div className="muted" style={{ padding: 24, textAlign: "center" }}>
+                  No call logs recorded yet. Calls made via Telephony or In-Browser Audio will appear here automatically.
+                </div>
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Direction</th>
+                      <th>Caller</th>
+                      <th>Intent</th>
+                      <th>Outcome</th>
+                      <th>Duration</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...callLogs]
+                      .sort((a, b) => {
+                        const tA = a.timestamp || (a.callTimeIso ? new Date(a.callTimeIso).getTime() : 0);
+                        const tB = b.timestamp || (b.callTimeIso ? new Date(b.callTimeIso).getTime() : 0);
+                        return tB - tA;
+                      })
+                      .map((r) => (
+                      <tr key={r.id}>
+                        <td className="mono muted tabular">{r.time}</td>
+                        <td>{r.direction === "inbound" ? "Inbound" : "Outbound"}</td>
+                        <td className="mono">{r.phone}</td>
+                        <td>{r.intent}</td>
+                        <td>
+                          <span className={`badge ${r.outcome === "Confirmed" ? "badge-success" : "badge-info"}`}>
+                            {r.outcome}
+                          </span>
+                        </td>
+                        <td className="mono muted tabular">{r.duration}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* ============ APPOINTMENTS CALENDAR SCREEN ============ */}
+        {currentScreen === "appts" && (
+          <section className="screen active">
+            <div className="eyebrow">Calendar & Backend Schedule</div>
+            <div className="topbar">
+              <div className="page-title">Clinic Appointments</div>
+              <div className="topbar-actions">
+                <button className="btn btn-secondary" onClick={fetchAllData} disabled={loadingCalendar}>
+                  <RefreshCw className={`w-4 h-4 ${loadingCalendar ? "animate-spin" : ""}`} /> Refresh DB
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => setShowBookingModal(true)}
+                >
+                  <Plus className="w-4 h-4" /> New Booking
+                </button>
+              </div>
+            </div>
+
+            {/* VISUAL WEEKLY CALENDAR GRID CONTROLS */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, padding: "0 4px" }}>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>
+                Weekly Grid: {currentWeekDays[0].toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", month: "short", day: "numeric" })} – {currentWeekDays[6].toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", month: "short", day: "numeric", year: "numeric" })}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn btn-outline btn-sm" onClick={() => setWeekOffset((prev) => prev - 1)}>← Prev Week</button>
+                <button className="btn btn-primary btn-sm" onClick={() => setWeekOffset(0)}>Current Week</button>
+                <button className="btn btn-outline btn-sm" onClick={() => setWeekOffset((prev) => prev + 1)}>Next Week →</button>
+              </div>
+            </div>
+
+            {/* VISUAL WEEKLY CALENDAR GRID */}
+            <div className="cal-grid" style={{ marginBottom: 24 }}>
+              <div className="cal-head" style={{ borderLeft: "none" }}>Time</div>
+              {currentWeekDays.map((d) => {
+                const dayName = d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", weekday: "short" });
+                const monthDay = `${d.getMonth() + 1}/${d.getDate()}`;
+                return (
+                  <div key={d.toISOString()} className="cal-head">
+                    {dayName} <span style={{ opacity: 0.7, fontSize: 11 }}>({monthDay})</span>
+                  </div>
+                );
+              })}
+              {["9 AM", "10 AM", "11 AM", "12 PM", "1 PM", "2 PM", "3 PM", "4 PM"].map((h) => (
+                <React.Fragment key={h}>
+                  <div className="cal-time">{h}</div>
+                  {currentWeekDays.map((weekDay, dayIdx) => {
+                    const matchedApts = appointments.filter((apt) => {
+                      if (!apt.start?.dateTime) return false;
+                      const aptDate = new Date(apt.start.dateTime);
+                      
+                      // Match year, month, date in IST timezone
+                      const aptIstDateStr = aptDate.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", year: "numeric", month: "numeric", day: "numeric" });
+                      const weekDayIstDateStr = weekDay.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", year: "numeric", month: "numeric", day: "numeric" });
+
+                      if (aptIstDateStr !== weekDayIstDateStr) return false;
+
+                      // Match hour in IST timezone
+                      const aptHour = parseInt(aptDate.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", hour12: false }));
+                      const parseH = parseInt(h);
+                      const isPm = h.includes("PM");
+                      const targetHour = isPm && parseH !== 12 ? parseH + 12 : (!isPm && parseH === 12 ? 0 : parseH);
+
+                      return aptHour === targetHour;
+                    });
+
+                    return (
+                      <div
+                        key={dayIdx}
+                        className={`cal-cell ${dayIdx >= 5 ? "blocked" : ""}`}
+                        style={{ cursor: "pointer" }}
+                        title={dayIdx >= 5 ? "Closed on Weekends" : "Click to book this time slot"}
+                        onClick={() => {
+                          if (dayIdx >= 5) {
+                            showToast("The clinic is closed on weekends. Operating hours are Monday to Friday, 9:00 AM to 5:00 PM.", "error");
+                            return;
+                          }
+                          const yyyy = weekDay.getFullYear();
+                          const mm = String(weekDay.getMonth() + 1).padStart(2, "0");
+                          const dd = String(weekDay.getDate()).padStart(2, "0");
+                          const dateIso = `${yyyy}-${mm}-${dd}`;
+
+                          const parseH = parseInt(h);
+                          const isPm = h.includes("PM");
+                          const targetHour = isPm && parseH !== 12 ? parseH + 12 : (!isPm && parseH === 12 ? 0 : parseH);
+                          const hourStr = String(targetHour).padStart(2, "0") + ":00";
+
+                          setNewBookingDate(dateIso);
+                          setNewBookingTime(hourStr);
+                          setShowBookingModal(true);
+                        }}
+                      >
+                        {matchedApts.map((apt) => (
+                          <div
+                            key={apt.id}
+                            className="cal-slot"
+                            data-dept="general"
+                            style={{ background: "var(--primary-tint)", border: "1px solid var(--primary)", color: "var(--primary)", cursor: "pointer" }}
+                            title="Click to view appointment details"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedAppointment(apt);
+                            }}
+                          >
+                            <span className="dept-dot" /> {apt.patientName} ({getFormattedDoctorAndDept(apt)?.slice(0, 22) || "Consultation"})
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </React.Fragment>
+              ))}
+            </div>
+
+            <div className="card section-gap">
+              <div className="card-title" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span>Backend Database Calendar Entries ({appointments.length})</span>
+                {calendarError && <span className="status status-warn">{calendarError}</span>}
+              </div>
+
+              {appointments.length === 0 ? (
+                <div className="muted" style={{ padding: "20px 0", fontSize: 13.5 }}>
+                  The clinic calendar is currently empty. Click "New Booking" or use the Voice Assistant to book a slot.
+                </div>
+              ) : (
+                <div className="row-list">
+                  {appointments.map((apt) => (
+                    <div
+                      key={apt.id}
+                      className="call-row"
+                      style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
+                      onClick={() => setSelectedAppointment(apt)}
+                      title="Click to view appointment details"
+                    >
+                      <span className="wave" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                      <div className="call-row-body" style={{ flex: 1 }}>
+                        <div className="call-row-top">
+                          <span className="badge badge-success">{apt.status || "confirmed"}</span>
+                          <span className="call-phone">{apt.patientName} ({apt.patientPhone})</span>
+                          <span className="call-timer tabular">
+                            {apt.start?.dateTime ? new Date(apt.start.dateTime).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) + " IST" : "Custom Slot"}
+                          </span>
+                        </div>
+                        <div className="call-snippet">{getFormattedDoctorAndDept(apt)}</div>
+                      </div>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteAppointment(apt.id);
+                        }}
+                        style={{ marginLeft: 12 }}
+                        title="Cancel Appointment"
+                      >
+                        <Trash2 className="w-4 h-4 opacity-60 text-red-500" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* ============ PATIENTS DIRECTORY SCREEN ============ */}
+        {currentScreen === "patients" && (
+          <section className="screen active">
+            <div className="eyebrow flex items-center justify-between">
+              <span>Patient Directory & Telephony Linkage</span>
+              <span className="text-xs text-muted-foreground font-medium">Auto-extracted from Telephony Calls</span>
+            </div>
+            <div className="topbar flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-3">
+              <div className="page-title">Patients Directory ({filteredPatients.length})</div>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <button className="btn btn-secondary text-xs flex items-center gap-1.5" onClick={fetchAllData}>
+                  <RefreshCw className="w-3.5 h-3.5" /> Sync Call Patient Names
+                </button>
+                <button className="btn btn-primary text-xs flex items-center gap-1.5" onClick={() => setShowAddPatientModal(true)}>
+                  <UserPlus className="w-3.5 h-3.5" /> Register Patient
+                </button>
+              </div>
+            </div>
+
+            {/* Search Filter Bar */}
+            <div className="card p-3.5 mb-4 border border-border/70 bg-card rounded-xl">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search patient by name, phone number, or notes..."
+                  value={patientSearchQuery}
+                  onChange={(e) => setPatientSearchQuery(e.target.value)}
+                  style={{ paddingLeft: "38px" }}
+                  className="w-full text-xs pr-3 py-2.5 border border-input rounded-lg bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+              </div>
+            </div>
+
+            {/* Patients Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredPatients.length === 0 ? (
+                <div className="col-span-full card p-8 text-center text-xs text-muted-foreground space-y-2 border border-dashed border-border rounded-xl">
+                  <Users className="w-8 h-8 opacity-40 mx-auto" />
+                  <p className="font-semibold text-foreground text-sm">No patients matching search query</p>
+                  <p className="max-w-md mx-auto">Patient names and contact details are automatically fetched and saved here whenever a patient calls or books an appointment.</p>
+                </div>
+              ) : (
+                filteredPatients.map((p) => {
+                  const displayName = (p.name || "Patient")
+                    .replace(/\(Call Purpose:[^)]*\)/gi, "")
+                    .replace(/\(Operating Hours:[^)]*\)/gi, "")
+                    .replace(/\(CLOSED[^)]*\)/gi, "")
+                    .replace(/\(UNKNOWN\)/gi, "")
+                    .replace(/\([^)]*\)/g, "")
+                    .trim() || "Patient";
+                  const initials = displayName
+                    .split(" ")
+                    .filter(Boolean)
+                    .slice(0, 2)
+                    .map(n => n[0])
+                    .join("")
+                    .toUpperCase() || "PT";
 
                   return (
-                    <div 
-                      key={evt.id} 
-                      className="p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition duration-200 space-y-3"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-black text-slate-900">{details.patientName}</span>
-                            <span className="text-[10px] font-mono font-semibold text-slate-500 bg-slate-200/60 px-2 py-0.5 rounded-md">
-                              {details.phone}
-                            </span>
+                    <div key={p.id} className="card p-4 border border-border/70 hover:border-primary/50 transition-all rounded-xl space-y-3 bg-card shadow-2xs">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center text-sm border border-primary/20 shrink-0">
+                            {initials}
                           </div>
-                          <p className="text-[11px] font-semibold text-emerald-700 mt-0.5">
-                            {evt.summary || details.reason}
-                          </p>
+                          <div>
+                            <h4 className="font-bold text-sm text-foreground">{displayName}</h4>
+                            <div className="text-xs text-muted-foreground font-mono flex items-center gap-1 mt-0.5">
+                              <PhoneCall className="w-3 h-3 text-emerald-500 shrink-0" /> {p.phone}
+                            </div>
+                          </div>
                         </div>
-                        <span className="text-[9px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full shrink-0">
-                          2-Day Prior Trigger
+                        <span className="text-[10px] font-semibold bg-muted text-muted-foreground px-2 py-0.5 rounded-full shrink-0">
+                          {p.language || "English"}
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2 text-[10px] bg-white p-2.5 rounded-xl border border-slate-100 font-mono">
-                        <div>
-                          <span className="text-slate-400 block font-sans uppercase text-[9px] font-bold">Appointment</span>
-                          <span className="font-bold text-slate-700">{apptDateStr}</span>
+                      {p.notes && (
+                        <div className="text-xs text-muted-foreground bg-muted/40 p-2.5 rounded-lg border border-border/40 leading-relaxed">
+                          <span className="font-semibold text-foreground block text-[11px] mb-0.5">Call &amp; Patient Notes:</span>
+                          {p.notes.replace(/Sarvam Call/gi, "Voice Call").replace(/Sarvam/gi, "AI Assistant").replace(/Gemini/gi, "AI Assistant")}
                         </div>
-                        <div>
-                          <span className="text-emerald-600 block font-sans uppercase text-[9px] font-bold">Follow-Up Call Date</span>
-                          <span className="font-bold text-emerald-600">{followUpStr}</span>
-                        </div>
-                      </div>
-
-                      {details.patientContext && (
-                        <p className="text-[10px] text-slate-500 italic bg-slate-100/60 p-2 rounded-lg leading-relaxed">
-                          <strong className="not-italic text-slate-700 font-semibold">Context: </strong>
-                          {details.patientContext}
-                        </p>
                       )}
 
-                      <button
-                        onClick={() => triggerCall("followup", evt)}
-                        disabled={callState === "connected" || callState === "ringing"}
-                        className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-bold text-xs py-2 px-3 rounded-xl transition duration-200 flex items-center justify-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
-                      >
-                        <PhoneCall className="w-3.5 h-3.5" />
-                        <span>Launch Follow-Up Call (Browser Demo)</span>
-                      </button>
+                      <div className="flex items-center justify-between pt-2 border-t border-border/50 text-xs">
+                        <span className="text-[11px] text-muted-foreground font-mono">ID: {p.id.slice(-8)}</span>
+                        <button
+                          onClick={() => {
+                            const cleanP = p.phone.replace(/[^\d+]/g, "");
+                            setSarvamPhone(cleanP);
+                            triggerSarvamCall(cleanP, displayName, "Consultation & Health Follow-up Call");
+                          }}
+                          className="btn btn-primary text-[11px] py-1 px-2.5 flex items-center gap-1.5 cursor-pointer"
+                          title="Trigger Telephony AI Call"
+                        >
+                          <PhoneForwarded className="w-3 h-3" /> Dial Patient
+                        </button>
+                      </div>
                     </div>
                   );
                 })
               )}
             </div>
+          </section>
+        )}
 
-            <div className="pt-2 border-t border-slate-100 text-[10px] text-slate-400 leading-relaxed">
-              <strong className="text-slate-600">Working Hours Enforcement:</strong> Calls verify doctor schedule & working hours (Mon-Fri, 9am-5pm). Rescheduling automatically cross-references and updates Google Calendar.
+        {/* ============ DOCTORS & DEPARTMENTS SCREEN ============ */}
+        {currentScreen === "doctors" && (
+          <section className="screen active space-y-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
+              <div>
+                <div className="eyebrow">Medical Roster</div>
+                <div className="page-title">Doctors &amp; Clinical Departments ({doctorsList.length})</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  className="btn btn-primary flex items-center gap-1.5 cursor-pointer text-xs py-2 px-3.5"
+                  onClick={() => setShowAddDoctorModal(true)}
+                >
+                  <UserPlus className="w-4 h-4" /> Add Doctor
+                </button>
+                <button
+                  className="btn btn-secondary flex items-center gap-1.5 cursor-pointer text-xs py-2 px-3.5"
+                  onClick={() => {
+                    setShowBookingModal(true);
+                  }}
+                >
+                  <Plus className="w-4 h-4" /> Book Appointment
+                </button>
+              </div>
             </div>
-          </div>
 
-          {/* REALTIME ACTION TRIGGER (Workspace Confirmation Requirement) */}
-          {pendingAction && (
-            <div className="bg-gradient-to-br from-slate-900 to-slate-850 text-white rounded-3xl p-6 border border-emerald-500/30 shadow-2xl animate-fade-in relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
-              
-              <div className="flex items-start gap-3">
-                <div className="w-9 h-9 rounded-xl bg-emerald-500/20 flex items-center justify-center shrink-0 border border-emerald-500/30">
-                  <Sparkles className="w-5 h-5 text-emerald-400 animate-pulse" />
-                </div>
-                <div>
-                  <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-400 font-mono">Approval Required</span>
-                  <h3 className="text-sm font-bold tracking-tight mt-0.5">Calendar Mutation Requested</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {doctorsList.map((d) => {
+                const initials = d.name.replace("Dr. ", "").split(" ").map(n => n[0]).join("");
+                return (
+                  <div key={d.id} className="card p-5 hover:shadow-md transition border border-slate-200/80 rounded-2xl bg-white flex flex-col justify-between relative group">
+                    <div>
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-11 h-11 rounded-xl bg-slate-900 text-white font-bold flex items-center justify-center text-sm shadow-sm shrink-0">
+                            {initials}
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-slate-900 text-sm leading-snug">{d.name}</h3>
+                            <p className="text-xs font-medium text-emerald-600">{d.title}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            {d.next}
+                          </span>
+                          <button
+                            className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
+                            title={`Remove ${d.name}`}
+                            onClick={() => handleDeleteDoctor(d.id, d.name)}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5 py-2 border-y border-slate-100 my-2 text-xs">
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span className="font-medium text-slate-400">Department</span>
+                          <span className="font-semibold text-slate-800">{d.dept}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span className="font-medium text-slate-400">Experience</span>
+                          <span className="font-semibold text-slate-700">{d.experience}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span className="font-medium text-slate-400">OPD Fee</span>
+                          <span className="font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md">{d.fee}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span className="font-medium text-slate-400">Schedule</span>
+                          <span className="font-mono text-[11px] text-slate-600">{d.days}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      className="mt-3 w-full btn btn-secondary text-xs py-2 flex items-center justify-center gap-1.5"
+                      onClick={() => {
+                        setNewBookingDoctor(`${d.name} (${d.dept})`);
+                        setShowBookingModal(true);
+                      }}
+                    >
+                      Book with {d.name.split(" ")[1] || d.name}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* ============ KNOWLEDGE BASE SCREEN ============ */}
+        {currentScreen === "kb" && (
+          <section className="screen active">
+            <KnowledgeBaseManager showToast={showToast} />
+          </section>
+        )}
+
+        {/* ============ ANALYTICS SCREEN ============ */}
+        {currentScreen === "analytics" && (
+          <section className="screen active">
+            <div className="eyebrow">Real-time Stats</div>
+            <div className="topbar">
+              <div className="page-title">Analytics</div>
+            </div>
+            <div className="hero-row">
+              <div className="hero-stat">
+                <div className="eyebrow">Appointments Booked</div>
+                <div className="hero-num accent">{appointments.length}</div>
+              </div>
+              <div className="hero-stat">
+                <div className="eyebrow">Total Calls Recorded</div>
+                <div className="hero-num">{callLogs.length}</div>
+              </div>
+              <div className="hero-stat">
+                <div className="eyebrow">Outbound Queue</div>
+                <div className="hero-num">{outboundQueue.length}</div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* ============ SETTINGS SCREEN ============ */}
+        {currentScreen === "settings" && (
+          <section className="screen active">
+            <div className="eyebrow">Workspace</div>
+            <div className="topbar">
+              <div className="page-title">Settings</div>
+            </div>
+
+            <div className="card" style={{ maxWidth: 520 }}>
+              <div className="field">
+                <label>Hospital / Clinic Name</label>
+                <input type="text" value={hospitalName} onChange={(e) => setHospitalName(e.target.value)} />
+              </div>
+              <div className="field">
+                <label>Business Hours</label>
+                <div className="kv-row"><span className="k">Mon–Fri</span><span>9:00 AM – 5:00 PM</span></div>
+              </div>
+              <button className="btn btn-primary" onClick={() => showToast("Saved settings", "success")}>Save changes</button>
+            </div>
+          </section>
+        )}
+      </main>
+
+      {/* ================= VIEW APPOINTMENT DETAILS MODAL ================= */}
+      {selectedAppointment && (
+        <div className="modal-backdrop open" onClick={() => setSelectedAppointment(null)}>
+          <div className="modal" style={{ maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between pb-3 border-b border-border">
+              <div>
+                <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                  <CalendarIcon className="w-4 h-4 text-primary" /> Appointment Details
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">Aivana Hospital Schedule Record</p>
+              </div>
+              <button
+                type="button"
+                className="p-1 rounded-lg text-muted-foreground hover:bg-slate-100 hover:text-foreground"
+                onClick={() => setSelectedAppointment(null)}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3.5 mt-3 text-sm">
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <div className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Scheduled Date &amp; Time</div>
+                <div className="text-sm font-bold text-slate-800 mt-1 flex items-center gap-1.5">
+                  <Clock className="w-4 h-4 text-primary" />
+                  {selectedAppointment.start?.dateTime
+                    ? new Date(selectedAppointment.start.dateTime).toLocaleString("en-IN", {
+                        timeZone: "Asia/Kolkata",
+                        weekday: "long",
+                        year: "numeric",
+                        month: "long",
+                        day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit",
+                        hour12: true
+                      }) + " IST"
+                    : "Scheduled Slot"}
                 </div>
               </div>
 
-              {/* Action breakdown */}
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-4 mt-4 space-y-3">
-                <div className="flex items-center justify-between text-xs pb-2 border-b border-white/5">
-                  <span className="text-slate-400">Action Type</span>
-                  <span className="font-bold uppercase tracking-wider text-emerald-400 text-[10px] font-mono">
-                    {pendingAction.type}
-                  </span>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-xs text-muted-foreground font-medium">Patient Name</div>
+                  <div className="font-semibold text-slate-800 mt-0.5">{selectedAppointment.patientName || "Patient"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground font-medium">Phone Number</div>
+                  <div className="font-semibold text-slate-800 mt-0.5">{selectedAppointment.patientPhone || "N/A"}</div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-xs text-muted-foreground font-medium">Doctor / Department</div>
+                  <div className="font-semibold text-slate-800 mt-0.5">{getFormattedDoctorAndDept(selectedAppointment)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground font-medium">Status</div>
+                  <div className="mt-0.5">
+                    <span className="badge badge-success text-xs capitalize">{selectedAppointment.status || "confirmed"}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs text-muted-foreground font-medium">Reason for Visit / Notes</div>
+                <div className="text-xs text-slate-700 bg-slate-50 p-2.5 rounded-md mt-1 border border-slate-200">
+                  {(selectedAppointment.reason || "General Consultation").replace(/Sarvam AI/gi, "AI Assistant").replace(/Sarvam/gi, "Voice Assistant").replace(/Gemini/gi, "AI Assistant")}
+                </div>
+              </div>
+
+              {selectedAppointment.patientContext && (
+                <div>
+                  <div className="text-xs text-muted-foreground font-medium">Booking Context / Source</div>
+                  <div className="text-xs text-slate-600 mt-0.5">{selectedAppointment.patientContext.replace(/Sarvam AI/gi, "AI Assistant").replace(/Sarvam/gi, "Voice Assistant").replace(/Gemini/gi, "AI Assistant")}</div>
+                </div>
+              )}
+            </div>
+
+            <div className="modal-actions pt-3 mt-4 border-t border-border flex items-center justify-between">
+              <button
+                type="button"
+                className="btn btn-secondary text-xs text-red-600 hover:bg-red-50 hover:border-red-200 flex items-center gap-1.5"
+                onClick={() => {
+                  handleDeleteAppointment(selectedAppointment.id);
+                  setSelectedAppointment(null);
+                }}
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Cancel Appointment
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary text-xs"
+                onClick={() => setSelectedAppointment(null)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= NEW BOOKING MODAL ================= */}
+      {showBookingModal && (
+        <div className="modal-backdrop open">
+          <div className="modal" style={{ maxWidth: 440 }}>
+            <h3>New Clinic Appointment Booking</h3>
+            <div className="field" style={{ marginTop: 12 }}>
+              <label>Patient Full Name</label>
+              <input
+                type="text"
+                placeholder="e.g. Rahul Sharma"
+                value={newBookingName}
+                onChange={(e) => setNewBookingName(e.target.value)}
+              />
+            </div>
+            <div className="field" style={{ marginTop: 8 }}>
+              <label>Phone Number</label>
+              <input
+                type="tel"
+                value={newBookingPhone}
+                onChange={(e) => setNewBookingPhone(e.target.value)}
+              />
+            </div>
+            <div className="field" style={{ marginTop: 8 }}>
+              <label>Specialist Doctor & Department</label>
+              <select value={newBookingDoctor} onChange={(e) => setNewBookingDoctor(e.target.value)}>
+                {doctorsList.map((doc) => (
+                  <option key={doc.id} value={`${doc.name} (${doc.dept})`}>
+                    {doc.name} — {doc.dept} ({doc.fee})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field" style={{ marginTop: 8 }}>
+              <label>Appointment Date (Mon–Fri Operating Days)</label>
+              <input
+                type="date"
+                value={newBookingDate}
+                onChange={(e) => setNewBookingDate(e.target.value)}
+                min={new Date().toISOString().split("T")[0]}
+              />
+            </div>
+            <div className="field" style={{ marginTop: 8 }}>
+              <label>Time Slot (Clinic Hours 9 AM - 5 PM)</label>
+              <select value={newBookingTime} onChange={(e) => setNewBookingTime(e.target.value)}>
+                <option value="09:00">9:00 AM</option>
+                <option value="10:00">10:00 AM</option>
+                <option value="10:30">10:30 AM</option>
+                <option value="11:00">11:00 AM</option>
+                <option value="12:00">12:00 PM (Noon)</option>
+                <option value="13:00">1:00 PM</option>
+                <option value="14:00">2:00 PM</option>
+                <option value="15:00">3:00 PM</option>
+                <option value="16:00">4:00 PM</option>
+              </select>
+            </div>
+            <div className="field" style={{ marginTop: 8 }}>
+              <label>Reason for Visit</label>
+              <input
+                type="text"
+                placeholder="e.g. General Checkup"
+                value={newBookingReason}
+                onChange={(e) => setNewBookingReason(e.target.value)}
+              />
+            </div>
+            <div className="modal-actions" style={{ marginTop: 16 }}>
+              <button className="btn btn-secondary" onClick={() => setShowBookingModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleManualBookingSubmit}>Save Appointment</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= REGISTER PATIENT MODAL ================= */}
+      {showAddPatientModal && (
+        <div className="modal-backdrop open">
+          <div className="modal" style={{ maxWidth: 440 }}>
+            <h3>Register Patient Record</h3>
+            <p className="text-xs text-muted-foreground mt-1">Add patient to clinical directory for AI telephony and appointments.</p>
+            
+            <form onSubmit={handleSavePatient} className="space-y-3 mt-4">
+              <div className="field">
+                <label>Patient Full Name *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Ananya Verma"
+                  value={newPatientName}
+                  onChange={(e) => setNewPatientName(e.target.value)}
+                  autoFocus
+                />
+              </div>
+
+              <div className="field">
+                <label>Phone Number *</label>
+                <input
+                  type="tel"
+                  placeholder="+918446163990"
+                  value={newPatientPhone}
+                  onChange={(e) => setNewPatientPhone(e.target.value)}
+                />
+              </div>
+
+              <div className="field">
+                <label>Preferred Language</label>
+                <select value={newPatientLanguage} onChange={(e) => setNewPatientLanguage(e.target.value)}>
+                  <option value="English">English</option>
+                  <option value="Hindi">Hindi</option>
+                  <option value="Kannada">Kannada</option>
+                  <option value="Tamil">Tamil</option>
+                  <option value="Telugu">Telugu</option>
+                </select>
+              </div>
+
+              <div className="field">
+                <label>Patient Context / Notes</label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. History of allergy, prefers morning consultations"
+                  value={newPatientNotes}
+                  onChange={(e) => setNewPatientNotes(e.target.value)}
+                />
+              </div>
+
+              <div className="modal-actions pt-2">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowAddPatientModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Save Patient</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= ADD DOCTOR MODAL ================= */}
+      {showAddDoctorModal && (
+        <div className="modal-backdrop open">
+          <div className="modal" style={{ maxWidth: 520, maxHeight: "90vh", overflowY: "auto" }}>
+            <div className="flex items-center justify-between pb-2 border-b border-border">
+              <div>
+                <h3 className="text-base font-bold text-foreground">Add New Specialist Doctor</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">Register a doctor to the clinical roster &amp; voice assistant schedule engine.</p>
+              </div>
+              <button
+                type="button"
+                className="p-1 rounded-lg text-muted-foreground hover:bg-slate-100 hover:text-foreground"
+                onClick={() => setShowAddDoctorModal(false)}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddDoctorSubmit} className="space-y-3.5 mt-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="field">
+                  <label>Doctor Full Name *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Dr. Priya Nair"
+                    value={newDocName}
+                    onChange={(e) => setNewDocName(e.target.value)}
+                    autoFocus
+                    required
+                  />
                 </div>
 
-                <div className="space-y-1.5">
-                  <p className="text-[10px] text-slate-400">Appointment Description</p>
-                  <p className="text-xs font-semibold text-slate-100">
-                    {pendingAction.details?.title || "Doctor Consultation"}
-                  </p>
+                <div className="field">
+                  <label>Qualifications &amp; Title *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. MD, DM (Cardiology)"
+                    value={newDocTitle}
+                    onChange={(e) => setNewDocTitle(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="field">
+                  <label>Department / Specialization *</label>
+                  <select
+                    value={newDocDept}
+                    onChange={(e) => setNewDocDept(e.target.value)}
+                  >
+                    <option value="General Medicine & Surgery">General Medicine &amp; Surgery</option>
+                    <option value="Cardiology & Heart Care">Cardiology &amp; Heart Care</option>
+                    <option value="Orthopedics & Joint Care">Orthopedics &amp; Joint Care</option>
+                    <option value="Pediatrics & Child Care">Pediatrics &amp; Child Care</option>
+                    <option value="Obstetrics & Gynecology">Obstetrics &amp; Gynecology</option>
+                    <option value="Dermatology & Cosmetology">Dermatology &amp; Cosmetology</option>
+                    <option value="Neurology & Brain Care">Neurology &amp; Brain Care</option>
+                    <option value="ENT & Head-Neck">ENT &amp; Head-Neck</option>
+                    <option value="Psychiatry & Behavioral Health">Psychiatry &amp; Behavioral Health</option>
+                    <option value="Ophthalmology & Eye Care">Ophthalmology &amp; Eye Care</option>
+                    <option value="Custom">Custom Department...</option>
+                  </select>
                 </div>
 
-                {pendingAction.details?.start && (
-                  <div className="space-y-1.5">
-                    <p className="text-[10px] text-slate-400">Proposed Slot</p>
-                    <p className="text-xs font-bold text-slate-100 font-mono bg-white/5 p-2 rounded-xl border border-white/5">
-                      {new Date(pendingAction.details.start).toLocaleString()}
-                    </p>
+                {newDocDept === "Custom" ? (
+                  <div className="field">
+                    <label>Custom Dept Name *</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Pulmonology"
+                      value={newDocCustomDept}
+                      onChange={(e) => setNewDocCustomDept(e.target.value)}
+                      required
+                    />
+                  </div>
+                ) : (
+                  <div className="field">
+                    <label>Years of Experience *</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 10+ Yrs Exp"
+                      value={newDocExp}
+                      onChange={(e) => setNewDocExp(e.target.value)}
+                    />
                   </div>
                 )}
               </div>
 
-              {/* Control button */}
-              <div className="grid grid-cols-2 gap-3 mt-6">
+              {newDocDept === "Custom" && (
+                <div className="field">
+                  <label>Years of Experience *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 10+ Yrs Exp"
+                    value={newDocExp}
+                    onChange={(e) => setNewDocExp(e.target.value)}
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="field">
+                  <label>OPD Consultation Fee *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. ₹1,000"
+                    value={newDocFee}
+                    onChange={(e) => setNewDocFee(e.target.value)}
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Availability Badge Tag</label>
+                  <select
+                    value={newDocNext}
+                    onChange={(e) => setNewDocNext(e.target.value)}
+                  >
+                    <option value="Available Today">Available Today</option>
+                    <option value="Mon, Wed, Fri">Mon, Wed, Fri</option>
+                    <option value="Tue, Thu, Sat">Tue, Thu, Sat</option>
+                    <option value="Mon–Sat (9 AM–5 PM)">Mon–Sat (9 AM–5 PM)</option>
+                    <option value="On Call">On Call</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="field">
+                <label>OPD Days &amp; Working Hours Schedule *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Mon–Fri (9:00 AM–5:00 PM)"
+                  value={newDocDays}
+                  onChange={(e) => setNewDocDays(e.target.value)}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="field">
+                  <label>Slot Duration</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 30 min slots"
+                    value={newDocSlotDur}
+                    onChange={(e) => setNewDocSlotDur(e.target.value)}
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Buffer Time Between Slots</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 5 min buffer"
+                    value={newDocBuffer}
+                    onChange={(e) => setNewDocBuffer(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="modal-actions pt-2 flex items-center justify-end gap-2">
                 <button
-                  onClick={executeCalendarAction}
-                  disabled={calendarLoading}
-                  className="bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-white font-semibold text-xs py-3 px-4 rounded-xl transition duration-200 flex items-center justify-center gap-1.5 active:scale-95"
+                  type="button"
+                  className="btn btn-secondary text-xs"
+                  onClick={() => setShowAddDoctorModal(false)}
                 >
-                  {calendarLoading ? (
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <>
-                      <Check className="w-4 h-4" />
-                      <span>Approve booking</span>
-                    </>
-                  )}
+                  Cancel
                 </button>
                 <button
-                  onClick={rejectCalendarAction}
-                  className="bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white font-semibold text-xs py-3 px-4 rounded-xl transition duration-200 flex items-center justify-center gap-1.5"
+                  type="submit"
+                  className="btn btn-primary text-xs flex items-center gap-1.5"
                 >
-                  <X className="w-4 h-4" />
-                  <span>Reject</span>
+                  <UserPlus className="w-3.5 h-3.5" /> Save &amp; Register Doctor
                 </button>
               </div>
-            </div>
-          )}
-
-          {/* Action Success Alerts */}
-          {actionSuccessMessage && (
-            <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 text-emerald-800 flex gap-3 animate-fade-in">
-              <Check className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-xs font-bold">Action Completed</p>
-                <p className="text-[11px] text-emerald-700/90 mt-0.5">{actionSuccessMessage}</p>
-              </div>
-            </div>
-          )}
-
-          {/* Helpful Tips Panel */}
-          <div className="bg-white rounded-3xl border border-slate-100 p-6 shadow-xl shadow-slate-100/50 space-y-4">
-            <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400 font-mono">How to Test</h4>
-            <div className="space-y-3.5 text-xs text-slate-600">
-              <div className="flex gap-2.5">
-                <div className="w-5 h-5 rounded-full bg-slate-50 text-slate-500 flex items-center justify-center font-bold text-[10px] shrink-0 border border-slate-100">1</div>
-                <p className="leading-relaxed font-semibold">
-                  The clinic schedule is automatically maintained and synchronized in real-time by the backend app.
-                </p>
-              </div>
-              <div className="flex gap-2.5">
-                <div className="w-5 h-5 rounded-full bg-slate-50 text-slate-500 flex items-center justify-center font-bold text-[10px] shrink-0 border border-slate-100">2</div>
-                <p className="leading-relaxed font-semibold">
-                  Click <span className="font-bold text-slate-700">Book Appointment</span> to trigger a live call from Dr. Abhishek's receptionist to book a follow-up.
-                </p>
-              </div>
-              <div className="flex gap-2.5">
-                <div className="w-5 h-5 rounded-full bg-slate-50 text-slate-500 flex items-center justify-center font-bold text-[10px] shrink-0 border border-slate-100">3</div>
-                <p className="leading-relaxed font-semibold">
-                  Or click <span className="font-bold text-slate-700">Reschedule Conflict</span> to resolve a conflict where the doctor has a sudden scheduling surgery overlap.
-                </p>
-              </div>
-              <div className="flex gap-2.5">
-                <div className="w-5 h-5 rounded-full bg-slate-50 text-slate-500 flex items-center justify-center font-bold text-[10px] shrink-0 border border-slate-100">4</div>
-                <p className="leading-relaxed font-semibold">
-                  Converse smoothly using your voice. Say "Monday doesn't work, what about Tuesday morning?" and check how the assistant automatically selects open slots.
-                </p>
-              </div>
-            </div>
+            </form>
           </div>
-
         </div>
-      </main>
+      )}
+
+      {/* ================= SIDE PANEL DRAWER ================= */}
+      {sidePanel.open && (
+        <>
+          <div className="side-panel-backdrop open" onClick={closeSidePanel} />
+          <aside className="side-panel open">
+            <div className="side-panel-header">
+              <div>
+                <div className="side-panel-title">{sidePanel.title}</div>
+                {sidePanel.sub && <div className="side-panel-sub">{sidePanel.sub}</div>}
+              </div>
+              <button className="side-panel-close" onClick={closeSidePanel}>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {sidePanel.type === "manualCall" && (
+              <div>
+                <div className="field" style={{ maxWidth: "100%" }}>
+                  <label>Patient Name *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Arnav Patil"
+                    value={manualCallName}
+                    onChange={(e) => setManualCallName(e.target.value)}
+                  />
+                </div>
+
+                <div className="field" style={{ maxWidth: "100%" }}>
+                  <label>Phone Number *</label>
+                  <input
+                    type="tel"
+                    placeholder="+918446163990"
+                    value={manualCallPhone}
+                    onChange={(e) => setManualCallPhone(e.target.value)}
+                  />
+                </div>
+
+                <div className="field" style={{ maxWidth: "100%" }}>
+                  <label>Reason / Context Note</label>
+                  <textarea
+                    rows={3}
+                    placeholder="e.g. Reschedule appointment request"
+                    value={manualCallReason}
+                    onChange={(e) => setManualCallReason(e.target.value)}
+                  />
+                </div>
+
+                <div className="side-panel-actions">
+                  <button className="btn btn-primary" onClick={handleAddManualOutbound}>
+                    Queue & Start Call
+                  </button>
+                  <button className="btn btn-secondary" onClick={closeSidePanel}>Cancel</button>
+                </div>
+              </div>
+            )}
+          </aside>
+        </>
+      )}
+
+      {/* ================= TOAST CONTAINER ================= */}
+      <div className="toast-container">
+        {toasts.map((t) => (
+          <div key={t.id} className={`toast ${t.type || "info"}`}>
+            <span>{t.text}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

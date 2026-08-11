@@ -11,10 +11,15 @@ export interface Message {
   };
 }
 
-export interface GoogleCalendarEvent {
+export interface ClinicAppointment {
   id: string;
   summary?: string;
   description?: string;
+  patientName?: string;
+  patientPhone?: string;
+  patientEmail?: string;
+  reason?: string;
+  patientContext?: string;
   status?: string;
   start?: {
     dateTime?: string;
@@ -27,6 +32,8 @@ export interface GoogleCalendarEvent {
     timeZone?: string;
   };
 }
+
+export type GoogleCalendarEvent = ClinicAppointment;
 
 export type CallState = "idle" | "ringing" | "connected" | "completed" | "declined";
 
@@ -46,3 +53,51 @@ export interface AssistantResponse {
   reasoning: string;
   action: AssistantAction;
 }
+
+export interface KbDocument {
+  id: string;
+  title: string;
+  filename: string;
+  fileSize: number;
+  mimeType: string;
+  uploadedAt: string;
+  chunkCount: number;
+  status: "Indexed" | "Processing" | "Error";
+  sampleText: string;
+  category: "General" | "Insurance" | "Services" | "Doctors" | "Emergency" | "Pricing";
+}
+
+export interface KbChunk {
+  id: string;
+  docId: string;
+  docTitle: string;
+  chunkIndex: number;
+  text: string;
+  vectorDimensions?: number;
+  tokenCount: number;
+}
+
+export interface RagSearchResult {
+  chunk: KbChunk;
+  similarityScore: number;
+}
+
+export interface Doctor {
+  id: string;
+  name: string;
+  title: string;
+  dept: string;
+  experience: string;
+  fee: string;
+  days: string;
+  next: string;
+  color?: string;
+  rules?: { days: string; time: string; dur: string; buf: string }[];
+}
+
+export interface RagQueryResponse {
+  query: string;
+  ragAnswer: string;
+  topChunks: RagSearchResult[];
+}
+
