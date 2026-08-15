@@ -92,11 +92,21 @@ export const KnowledgeBaseManager: React.FC<KnowledgeBaseManagerProps> = ({ show
       if (!docTitle) {
         setDocTitle(file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " "));
       }
+
+      const ext = file.name.split('.').pop()?.toLowerCase() || '';
+      const isPlainText = ["txt", "md", "json", "csv"].includes(ext) || file.type.startsWith("text/");
+
       const reader = new FileReader();
       reader.onload = (event) => {
         setDocContent(event.target?.result as string || "");
       };
-      reader.readAsText(file);
+
+      if (isPlainText) {
+        reader.readAsText(file);
+      } else {
+        // Read binary files (PDF, DOC, DOCX, etc.) as Data URL (Base64)
+        reader.readAsDataURL(file);
+      }
     }
   };
 
@@ -127,7 +137,7 @@ export const KnowledgeBaseManager: React.FC<KnowledgeBaseManagerProps> = ({ show
         filename: selectedFile?.name || `${(docTitle || "document").toLowerCase().replace(/\s+/g, "_")}.txt`,
         content: docContent,
         fileSize: selectedFile?.size || docContent.length,
-        mimeType: selectedFile?.type || "text/plain"
+        mimeType: selectedFile?.type || (selectedFile?.name.endsWith(".pdf") ? "application/pdf" : "text/plain")
       };
 
       const res = await fetch("/api/kb/upload", {
@@ -136,7 +146,15 @@ export const KnowledgeBaseManager: React.FC<KnowledgeBaseManagerProps> = ({ show
         body: JSON.stringify(payload)
       });
 
-      const data = await res.json();
+      let data: any = {};
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        data = await res.json();
+      } else {
+        const textErr = await res.text();
+        throw new Error(`Server returned error (${res.status}): ${textErr.slice(0, 120)}`);
+      }
+
       if (!res.ok) throw new Error(data.error || "Failed to process document");
 
       setIngestStep("completed");

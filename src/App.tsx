@@ -309,7 +309,12 @@ export default function App() {
         showToast(`Phone call placed! Attempt ID: ${data.attempt_id?.slice(0, 8)}`, "success");
         fetchAllData();
       } else {
-        const errStr = typeof data.error === "string" ? data.error : (data.error ? JSON.stringify(data.error) : "Telephony call failed");
+        let errStr = "Telephony call failed";
+        if (typeof data.error === "string") {
+          errStr = data.error;
+        } else if (data.error && typeof data.error === "object") {
+          errStr = data.error.message || data.error.data?.details || JSON.stringify(data.error);
+        }
         setSarvamStatus({
           success: false,
           message: errStr

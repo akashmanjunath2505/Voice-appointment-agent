@@ -9,7 +9,8 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // --- IN-MEMORY PRODUCTION DB STORE (STRICTLY NO MOCK DATA) ---
 export interface ClinicAppointment {
@@ -84,8 +85,45 @@ export function resolveDoctorAndDepartment(deptReq?: string, textContext?: strin
 } {
   const combined = `${deptReq || ""} ${textContext || ""}`.toLowerCase();
 
-  // Keyword matching for specialists
-  if (combined.includes("rajesh") || combined.includes("kumar") || combined.includes("ortho") || combined.includes("bone") || combined.includes("joint") || combined.includes("knee") || combined.includes("fracture") || combined.includes("spine") || combined.includes("arthritis")) {
+  // 1. Direct Doctor Name Matching
+  if (combined.includes("rajesh") || combined.includes("dr. rajesh") || combined.includes("dr rajesh")) {
+    return {
+      doctor: "Dr. Rajesh Kumar",
+      department: "Orthopedics",
+      title: "Consultation with Dr. Rajesh Kumar (Orthopedics)"
+    };
+  }
+  if (combined.includes("ananya") || combined.includes("dr. ananya") || combined.includes("dr ananya")) {
+    return {
+      doctor: "Dr. Ananya Sharma",
+      department: "Cardiology",
+      title: "Consultation with Dr. Ananya Sharma (Cardiology)"
+    };
+  }
+  if (combined.includes("meera") || combined.includes("dr. meera") || combined.includes("dr meera")) {
+    return {
+      doctor: "Dr. Meera Nair",
+      department: "Pediatrics",
+      title: "Consultation with Dr. Meera Nair (Pediatrics)"
+    };
+  }
+  if (combined.includes("priya") || combined.includes("dr. priya") || combined.includes("dr priya")) {
+    return {
+      doctor: "Dr. Priya Deshmukh",
+      department: "Gynecology",
+      title: "Consultation with Dr. Priya Deshmukh (Gynecology)"
+    };
+  }
+  if (combined.includes("vikram") || combined.includes("dr. vikram") || combined.includes("dr vikram")) {
+    return {
+      doctor: "Dr. Vikram Patel",
+      department: "Dermatology",
+      title: "Consultation with Dr. Vikram Patel (Dermatology)"
+    };
+  }
+
+  // 2. Specialty & Department Keyword Matching
+  if (combined.includes("ortho") || combined.includes("orthopaed") || combined.includes("bone") || combined.includes("joint") || combined.includes("knee") || combined.includes("fracture") || combined.includes("spine") || combined.includes("arthritis")) {
     return {
       doctor: "Dr. Rajesh Kumar",
       department: "Orthopedics",
@@ -93,7 +131,7 @@ export function resolveDoctorAndDepartment(deptReq?: string, textContext?: strin
     };
   }
 
-  if (combined.includes("ananya") || combined.includes("sharma") || combined.includes("cardio") || combined.includes("heart") || combined.includes("chest pain") || combined.includes("ecg") || combined.includes("bp") || combined.includes("hypertension")) {
+  if (combined.includes("cardio") || combined.includes("cardiac") || combined.includes("heart") || combined.includes("chest pain") || combined.includes("ecg") || combined.includes("bp") || combined.includes("hypertension")) {
     return {
       doctor: "Dr. Ananya Sharma",
       department: "Cardiology",
@@ -101,7 +139,7 @@ export function resolveDoctorAndDepartment(deptReq?: string, textContext?: strin
     };
   }
 
-  if (combined.includes("meera") || combined.includes("nair") || combined.includes("pediat") || combined.includes("child") || combined.includes("infant") || combined.includes("vaccin") || combined.includes("baby")) {
+  if (combined.includes("pediat") || combined.includes("paediat") || combined.includes("child") || combined.includes("infant") || combined.includes("vaccin") || combined.includes("baby")) {
     return {
       doctor: "Dr. Meera Nair",
       department: "Pediatrics",
@@ -109,7 +147,7 @@ export function resolveDoctorAndDepartment(deptReq?: string, textContext?: strin
     };
   }
 
-  if (combined.includes("priya") || combined.includes("deshmukh") || combined.includes("gyn") || combined.includes("obg") || combined.includes("women") || combined.includes("pregna") || combined.includes("pcod") || combined.includes("maternity")) {
+  if (combined.includes("gynaec") || combined.includes("gynec") || combined.includes("women") || combined.includes("obstetr") || combined.includes("obg") || combined.includes("pregna") || combined.includes("pcod") || combined.includes("maternity")) {
     return {
       doctor: "Dr. Priya Deshmukh",
       department: "Gynecology",
@@ -117,7 +155,7 @@ export function resolveDoctorAndDepartment(deptReq?: string, textContext?: strin
     };
   }
 
-  if (combined.includes("vikram") || combined.includes("patel") || combined.includes("derma") || combined.includes("skin") || combined.includes("acne") || combined.includes("rash") || combined.includes("hair") || combined.includes("cosmet")) {
+  if (combined.includes("dermat") || combined.includes("skin") || combined.includes("acne") || combined.includes("rash") || combined.includes("hair") || combined.includes("cosmet")) {
     return {
       doctor: "Dr. Vikram Patel",
       department: "Dermatology",
@@ -133,14 +171,14 @@ export function resolveDoctorAndDepartment(deptReq?: string, textContext?: strin
     };
   }
 
-  // Fallback if explicit department requested is provided
+  // Fallback for custom department requested
   if (deptReq && deptReq.trim().length > 0) {
     const cleanDept = deptReq.trim();
     const formattedDept = cleanDept.charAt(0).toUpperCase() + cleanDept.slice(1);
     return {
-      doctor: "Dr. Abhishek",
+      doctor: `Department Specialist`,
       department: formattedDept,
-      title: `Consultation with Dr. Abhishek (${formattedDept})`
+      title: `Consultation (${formattedDept})`
     };
   }
 
@@ -292,19 +330,54 @@ function parseAppointmentDateTime(str: string, referenceIso?: string): string {
     }
   }
 
+  // Check for explicit year (e.g., 2026, 2027)
+  const yearMatch = lower.match(/\b(202[4-9]|203[0-9])\b/);
+  if (yearMatch) {
+    targetYear = parseInt(yearMatch[1], 10);
+  }
+
   // 2. Determine Time
   let hours = 12;
   let minutes = 0;
 
-  const timeMatch = lower.match(/(?:at\s*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)/) || lower.match(/(\d{1,2}):(\d{2})/);
+  // Search for explicit action/agreement phrase first (e.g., "agreed to book at 10:30 am", "booked for 10:30 am", "slot at 10:30 am", "at 10:30 am", "for 10:30 am")
+  const agreementPhraseMatch = lower.match(/(?:booked|agreed|scheduled|confirmed|slot|instead|offered|for|at|to)\s*(?:for|at|to)?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
 
-  if (timeMatch) {
-    hours = parseInt(timeMatch[1], 10);
-    minutes = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
-    const ampm = timeMatch[3];
+  // Get all am/pm time matches
+  const allAmpmMatches = Array.from(lower.matchAll(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/gi));
+  const allColonMatches = Array.from(lower.matchAll(/\b(\d{1,2}):(\d{2})\b/g));
 
+  if (agreementPhraseMatch) {
+    hours = parseInt(agreementPhraseMatch[1], 10);
+    minutes = agreementPhraseMatch[2] ? parseInt(agreementPhraseMatch[2], 10) : 0;
+    const ampm = agreementPhraseMatch[3].toLowerCase();
     if (ampm === "pm" && hours < 12) hours += 12;
     if (ampm === "am" && hours === 12) hours = 0;
+  } else if (allAmpmMatches.length > 0) {
+    // Pick the LAST ampm match in the text if multiple exist (final agreed resolution)
+    const lastMatch = allAmpmMatches[allAmpmMatches.length - 1];
+    hours = parseInt(lastMatch[1], 10);
+    minutes = lastMatch[2] ? parseInt(lastMatch[2], 10) : 0;
+    const ampm = lastMatch[3].toLowerCase();
+    if (ampm === "pm" && hours < 12) hours += 12;
+    if (ampm === "am" && hours === 12) hours = 0;
+  } else if (allColonMatches.length > 0) {
+    const lastMatch = allColonMatches[allColonMatches.length - 1];
+    hours = parseInt(lastMatch[1], 10);
+    minutes = parseInt(lastMatch[2], 10);
+    if (hours < 8) hours += 12;
+  } else {
+    const oclockMatch = lower.match(/\b(\d{1,2})\s*o'?clock\b/i);
+    const atHourMatch = lower.match(/\bat\s*(\d{1,2})\b/i);
+    if (oclockMatch) {
+      hours = parseInt(oclockMatch[1], 10);
+      minutes = 0;
+      if (hours < 8) hours += 12;
+    } else if (atHourMatch) {
+      hours = parseInt(atHourMatch[1], 10);
+      minutes = 0;
+      if (hours < 8) hours += 12;
+    }
   }
 
   const finalDate = new Date(Date.UTC(targetYear, targetMonth, targetDate, hours, minutes, 0));
@@ -703,6 +776,74 @@ app.get("/api/kb/documents/:id/chunks", async (req, res) => {
   res.json({ chunks });
 });
 
+async function extractTextFromDocumentContent(
+  rawContent: string,
+  filename?: string,
+  mimeType?: string
+): Promise<string> {
+  const isDataUrl = rawContent.startsWith("data:");
+  const isPdf = (mimeType && mimeType.includes("pdf")) || (filename && filename.toLowerCase().endsWith(".pdf")) || rawContent.includes("data:application/pdf");
+  
+  if (isDataUrl || isPdf) {
+    let base64Data = rawContent;
+    if (rawContent.includes(";base64,")) {
+      base64Data = rawContent.split(";base64,")[1];
+    }
+
+    // Try Gemini multimodal extraction first
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        const fileMime = (mimeType && mimeType.includes("/")) ? mimeType : (isPdf ? "application/pdf" : "application/octet-stream");
+        const promptText = "You are an expert document parser for a hospital knowledge base. Extract all textual content, consultation fees, doctor details, operational schedules, rules, and policies from this document as clean plain text. Output ONLY the extracted text content with clean formatting.";
+        
+        const geminiRes = await ai.models.generateContent({
+          model: "gemini-3.6-flash",
+          contents: [
+            {
+              inlineData: {
+                mimeType: fileMime,
+                data: base64Data
+              }
+            },
+            { text: promptText }
+          ]
+        });
+
+        if (geminiRes.text && geminiRes.text.trim().length > 20) {
+          return geminiRes.text.trim();
+        }
+      } catch (err) {
+        console.warn("[PDF Extract] Gemini multimodal extraction fallback:", err);
+      }
+    }
+
+    // Fallback PDF / binary stream text parser if Gemini is offline
+    try {
+      const buffer = Buffer.from(base64Data, "base64");
+      const rawString = buffer.toString("binary");
+      const matches = rawString.match(/\(([^()]{3,})\)/g) || [];
+      const extractedStr = matches
+        .map(m => m.slice(1, -1))
+        .filter(s => /[a-zA-Z0-9\s.,₹$%&()-]/.test(s) && !s.includes("\\000"))
+        .join(" ")
+        .replace(/\s+/g, " ");
+
+      if (extractedStr && extractedStr.length > 30) {
+        return extractedStr;
+      }
+      
+      const utf8Text = buffer.toString("utf8");
+      if (/[\w\s]{20,}/.test(utf8Text)) {
+        return utf8Text;
+      }
+    } catch (e) {
+      console.warn("[PDF Extract] Buffer decoding fallback error:", e);
+    }
+  }
+
+  return rawContent;
+}
+
 app.post("/api/kb/upload", async (req, res) => {
   try {
     const { title, category, filename, content, mimeType, fileSize } = req.body;
@@ -716,9 +857,12 @@ app.post("/api/kb/upload", async (req, res) => {
     const docCat = category || "General";
     const docFilename = filename || `${docTitle.toLowerCase().replace(/\s+/g, "_")}.txt`;
 
-    const rawChunks = chunkDocumentText(docId, docTitle, content);
+    // Extract clean plain text from PDF / Base64 or raw document
+    const parsedText = await extractTextFromDocumentContent(content, docFilename, mimeType);
+
+    const rawChunks = chunkDocumentText(docId, docTitle, parsedText);
     if (rawChunks.length === 0) {
-      return res.status(400).json({ error: "Could not generate vector chunks from provided content" });
+      return res.status(400).json({ error: "Could not generate vector chunks from provided document content" });
     }
 
     const serverChunks: ServerKbChunk[] = [];
@@ -739,12 +883,12 @@ app.post("/api/kb/upload", async (req, res) => {
       id: docId,
       title: docTitle,
       filename: docFilename,
-      fileSize: fileSize || content.length,
+      fileSize: fileSize || parsedText.length,
       mimeType: mimeType || "text/plain",
       uploadedAt: new Date().toISOString(),
       chunkCount: serverChunks.length,
       status: "Indexed",
-      sampleText: content.slice(0, 150) + (content.length > 150 ? "..." : ""),
+      sampleText: parsedText.slice(0, 150) + (parsedText.length > 150 ? "..." : ""),
       category: docCat
     };
 
@@ -992,8 +1136,8 @@ async function syncSarvamCalls() {
                        ));
 
       if (isBooked) {
-        let prefDt = `${vars.preferred_datetime || ''} ${vars.call_summary || ''}`.trim();
-        if (!prefDt) prefDt = "tomorrow at 12 PM";
+        // Prioritize call_summary over stale initial preferred_datetime
+        let prefDt = vars.call_summary || vars.preferred_datetime || "tomorrow at 12 PM";
 
         const startIso = parseAppointmentDateTime(prefDt, callTimeIso);
         const endIso = formatIsoWithIst(new Date(new Date(startIso).getTime() + 30 * 60000));
@@ -1001,38 +1145,54 @@ async function syncSarvamCalls() {
 
         // Check operating hours before saving
         const checkHours = isWithinOperatingHours(startIso);
-        const isDuplicate = dbAppointments.some(a => 
-          a.patientPhone === phone && 
-          Math.abs(new Date(a.start.dateTime).getTime() - new Date(startIso).getTime()) < 15 * 60000
+
+        const docInfo = resolveDoctorAndDepartment(
+          vars.doctor_name || vars.department_requested || vars.department || vars.dept,
+          `${vars.doctor_name || ""} ${vars.department_requested || ""} ${vars.call_summary || ""} ${vars.notes || ""}`
         );
 
-        const docInfo = resolveDoctorAndDepartment(vars.department_requested, vars.call_summary);
+        const existingAptIdx = dbAppointments.findIndex(a => 
+          a.id === `apt-${attemptId}` || 
+          (attemptId && a.patientContext && a.patientContext.includes(attemptId))
+        );
 
-        if (checkHours.valid && !isDuplicate) {
-          const newApt: ClinicAppointment = {
-            id: `apt-${attemptId || Date.now()}`,
-            summary: docInfo.title,
-            patientName,
-            patientPhone: phone,
-            reason: (vars.call_summary || `Appointment booked via Telephony Call for ${prefDt}`).replace(/Sarvam/gi, "AI Assistant"),
-            patientContext: `Telephony Call Attempt ${attemptId}`,
-            start: { dateTime: startIso },
-            end: { dateTime: endIso },
-            status: "confirmed"
-          };
-          dbAppointments.unshift(newApt);
-        } else if (!checkHours.valid) {
-          console.log(`[Sarvam Sync] Skipped appointment outside operating hours: ${startIso} (${checkHours.reason})`);
+        if (existingAptIdx !== -1) {
+          // Update existing appointment record so newly agreed time (e.g. 10:30 AM instead of 12:00 PM) is reflected
+          dbAppointments[existingAptIdx].start = { dateTime: startIso };
+          dbAppointments[existingAptIdx].end = { dateTime: endIso };
+          dbAppointments[existingAptIdx].summary = docInfo.title;
+          dbAppointments[existingAptIdx].reason = (vars.call_summary || `Appointment booked via Telephony Call for ${prefDt}`).replace(/Sarvam/gi, "AI Assistant");
+        } else {
+          const isDuplicate = dbAppointments.some(a => 
+            a.patientPhone === phone && 
+            Math.abs(new Date(a.start.dateTime).getTime() - new Date(startIso).getTime()) < 15 * 60000
+          );
+
+          if (checkHours.valid && !isDuplicate) {
+            const newApt: ClinicAppointment = {
+              id: `apt-${attemptId || Date.now()}`,
+              summary: docInfo.title,
+              patientName,
+              patientPhone: phone,
+              reason: (vars.call_summary || `Appointment booked via Telephony Call for ${prefDt}`).replace(/Sarvam/gi, "AI Assistant"),
+              patientContext: `Telephony Call Attempt ${attemptId}`,
+              start: { dateTime: startIso },
+              end: { dateTime: endIso },
+              status: "confirmed"
+            };
+            dbAppointments.unshift(newApt);
+          } else if (!checkHours.valid) {
+            console.log(`[Sarvam Sync] Skipped appointment outside operating hours: ${startIso} (${checkHours.reason})`);
+          }
         }
       }
     }
 
     // Auto-repair existing appointment summaries if doctor/department mismatch
     for (const apt of dbAppointments) {
-      if (apt.summary) {
-        const resolved = resolveDoctorAndDepartment("", `${apt.summary} ${apt.reason || ""}`);
-        // If resolved doctor is a specialist but summary has generic/wrong doctor, update summary
-        if (resolved.doctor !== "Dr. Abhishek" && apt.summary.includes("Dr. Abhishek")) {
+      if (apt.summary || apt.reason) {
+        const resolved = resolveDoctorAndDepartment("", `${apt.summary || ""} ${apt.reason || ""}`);
+        if (resolved.title && apt.summary !== resolved.title) {
           apt.summary = resolved.title;
         }
       }
@@ -1062,14 +1222,29 @@ app.post("/api/appointments", (req, res) => {
     return res.status(400).json({ error: checkHours.reason || "Selected slot is outside clinic operating hours (Mon–Fri, 9:00 AM – 5:00 PM IST)." });
   }
 
+  const resolved = resolveDoctorAndDepartment("", `${summary || ""} ${reason || ""}`);
+
+  // Check overlap / duplicate slot for the same doctor or patient
+  const isOccupied = dbAppointments.some(a => {
+    const sameTime = Math.abs(new Date(a.start.dateTime).getTime() - new Date(startIso).getTime()) < 15 * 60000;
+    const sameDoc = a.summary?.toLowerCase() === resolved.title.toLowerCase() ||
+                    (resolved.doctor !== "Dr. Abhishek" && a.summary?.toLowerCase().includes(resolved.doctor.toLowerCase()));
+    return sameTime && sameDoc;
+  });
+
+  if (isOccupied) {
+    const timeStr = new Date(startIso).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: 'numeric', minute: '2-digit', hour12: true });
+    return res.status(400).json({ error: `${resolved.doctor} (${resolved.department}) already has an appointment booked at ${timeStr}. Please select another time slot.` });
+  }
+
   const newAppointment: ClinicAppointment = {
     id: `apt-${Date.now()}`,
-    summary: summary || `Consultation - ${patientName || "Patient"}`,
+    summary: summary || resolved.title,
     patientName: patientName || "Patient",
     patientPhone: patientPhone || "+918446163990",
     patientEmail: patientEmail || "",
     reason: reason || "General Medical Inquiry",
-    patientContext: "Scheduled via Aivana Voice Assistant",
+    patientContext: "Scheduled via Aivana Reception",
     start: { dateTime: startIso },
     end: { dateTime: endIso },
     status: "confirmed"
@@ -1327,7 +1502,7 @@ VOICE AGENT MANDATE:
 
 app.post("/api/sarvam/outbound-call", async (req, res) => {
   try {
-    const { user_phone_number, hospital_name, patient_name, call_reason } = req.body;
+    const { user_phone_number, hospital_name, patient_name, call_reason, department, doctor_name, preferred_datetime } = req.body;
     const phoneToCall = sanitizePhoneForSarvam(user_phone_number || "+918446163990");
     const url = `https://apps.sarvam.ai/api/outbounds/v1/orgs/${SARVAM_CONFIG.ORG_ID}/workspaces/${SARVAM_CONFIG.WORKSPACE_ID}/outbounds`;
 
@@ -1336,12 +1511,19 @@ app.post("/api/sarvam/outbound-call", async (req, res) => {
     const hospitalBase = (hospital_name || "Aivana Medical Center").trim();
     const patientBase = cleanPatientName(patient_name || "Patient");
 
-    // Clean single-line calendar summary for Sarvam (no newlines, no brackets)
-    const openSlotsShort = calCtx.openSlotsText || "9:00 AM to 5:00 PM";
-    
-    // Provide explicit operating hours in hospital_name and agent_variables so Sarvam voice agent strictly knows Mon-Fri 9-5 PM rule
-    const enrichedHospitalName = `${hospitalBase} (Operating Hours: Mon-Fri 9:00 AM - 5:00 PM IST, CLOSED Weekends)`;
-    const enrichedPatientName = `${patientBase}`;
+    const resolvedDoc = resolveDoctorAndDepartment(department || doctor_name, call_reason);
+
+    // Formulate department_requested with embedded context so Sarvam voice agent knows doctor & details without triggering 422 error
+    let departmentContext = resolvedDoc.department;
+    if (resolvedDoc.doctor && resolvedDoc.doctor !== "Dr. Abhishek") {
+      departmentContext += ` (${resolvedDoc.doctor})`;
+    }
+    if (call_reason) {
+      departmentContext += ` - ${call_reason}`;
+    }
+    if (preferred_datetime) {
+      departmentContext += ` [Slot: ${preferred_datetime}]`;
+    }
 
     const payload = {
       app_config: {
@@ -1354,6 +1536,7 @@ app.post("/api/sarvam/outbound-call", async (req, res) => {
         agent_variables: {
           hospital_name: hospitalBase,
           patient_name: patientBase,
+          department_requested: departmentContext,
         },
       },
       user_config: {
@@ -1688,12 +1871,19 @@ RULES FOR SLOT AVAILABILITY (MUST FOLLOW STRICTLY):
           `${lastUserMsg} ${speechText}`
         );
 
-        // Deduplicate before adding
-        const isDuplicate = dbAppointments.some(a => 
-          Math.abs(new Date(a.start.dateTime).getTime() - new Date(startIso).getTime()) < 15 * 60000
+        // Deduplicate / check slot occupancy before adding
+        const existingSlot = dbAppointments.find(a => 
+          Math.abs(new Date(a.start.dateTime).getTime() - new Date(startIso).getTime()) < 15 * 60000 &&
+          (a.summary?.toLowerCase() === docResolved.title.toLowerCase() ||
+           (docResolved.doctor !== "Dr. Abhishek" && a.summary?.toLowerCase().includes(docResolved.doctor.toLowerCase())))
         );
 
-        if (!isDuplicate) {
+        if (existingSlot) {
+          actionType = "none";
+          resultJson.action = { type: "none" };
+          const formattedIsoTime = new Date(startIso).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: 'numeric', minute: '2-digit', hour12: true });
+          resultJson.speech = `I am sorry, but the ${formattedIsoTime} slot is already booked for ${docResolved.doctor} (${docResolved.department}). Please select another available time slot during working hours (Monday to Friday, 9:00 AM to 5:00 PM IST).`;
+        } else {
           const newApt: ClinicAppointment = {
             id: `apt-${Date.now()}`,
             summary: docResolved.title,
@@ -1728,16 +1918,16 @@ RULES FOR SLOT AVAILABILITY (MUST FOLLOW STRICTLY):
             transcript: messages.map((m: any) => [m.role === "assistant" ? "ai" : "patient", m.content])
           });
           sortCallLogs();
-        }
 
-        resultJson.action = {
-          type: "schedule",
-          details: {
-            start: startIso,
-            end: endIso,
-            title: docResolved.title
-          }
-        };
+          resultJson.action = {
+            type: "schedule",
+            details: {
+              start: startIso,
+              end: endIso,
+              title: docResolved.title
+            }
+          };
+        }
       }
     } else if (actionType === "reschedule" && resultJson.action?.details?.eventId) {
       const idx = dbAppointments.findIndex(a => a.id === resultJson.action.details.eventId);
@@ -1756,6 +1946,17 @@ RULES FOR SLOT AVAILABILITY (MUST FOLLOW STRICTLY):
       action: { type: "none" }
     });
   }
+});
+
+// Global Express API Error Handling Middleware (Returns JSON instead of HTML)
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err) {
+    console.error("[Express API Error]:", err);
+    return res.status(err.status || 500).json({
+      error: err.message || "An unexpected error occurred while processing request"
+    });
+  }
+  next();
 });
 
 // Serve frontend
